@@ -17,13 +17,16 @@
 package geotrellis.spark
 
 import geotrellis.raster._
+import geotrellis.spark.io.ContainerConstructor
 import org.apache.spark.SparkContext._
 import org.apache.spark._
 import org.apache.spark.rdd._
+import spray.json.JsonFormat
 
 import scala.reflect.ClassTag
 
-class RasterRDD[K: ClassTag](val tileRdd: RDD[(K, Tile)], val metaData: RasterMetaData) extends RDD[(K, Tile)](tileRdd) {
+class RasterRDD[K: ClassTag](val tileRdd: RDD[(K, Tile)], val metaData: RasterMetaData)
+  extends BoundRDD[K, Tile](tileRdd) {
   override val partitioner = tileRdd.partitioner
 
   override def getPartitions: Array[Partition] = firstParent[(K, Tile)].partitions
@@ -58,9 +61,7 @@ class RasterRDD[K: ClassTag](val tileRdd: RDD[(K, Tile)], val metaData: RasterMe
 
   def combinePairs[R: ClassTag](other: RasterRDD[K])(f: ((K, Tile), (K, Tile)) => (R, Tile)): RasterRDD[R] =
     asRasterRDD(metaData) {
-      zipPartitions(other, true) { (partition1, partition2) =>
-        partition1.zip(partition2) map { case (row1, row2) => f(row1, row2) }
-      }
+      this.join(other).map { case (key, (tile1, tile2)) => f((key, tile1), (key, tile2)) }
     }
 
   def combinePairs(others: Traversable[RasterRDD[K]])(f: (Traversable[(K, Tile)] => (K, Tile))): RasterRDD[K] = {
@@ -77,6 +78,13 @@ class RasterRDD[K: ClassTag](val tileRdd: RDD[(K, Tile)], val metaData: RasterMe
         .map { case (id, tiles) => f(tiles) }
     }
   }
+
+  def asRasters()(implicit sc: SpatialComponent[K]): RDD[(K, Raster)] =
+    mapPartitions({ part =>
+      part.map { case (key, tile) =>
+        (key, Raster(tile, metaData.mapTransform(key)))
+      }
+    }, true)
 
   def minMax: (Int, Int) =
     map(_.tile.findMinMax)
@@ -122,4 +130,21 @@ class RasterRDD[K: ClassTag](val tileRdd: RDD[(K, Tile)], val metaData: RasterMe
 
 object RasterRDD {
   implicit class SpatialRasterRDD(val rdd: RasterRDD[SpatialKey]) extends SpatialRasterRDDMethods
+
+  implicit def implicitToRDD[K](rasterRdd: RasterRDD[K]): RDD[(K, Tile)] = rasterRdd
+
+  implicit def constructor[K: JsonFormat : ClassTag] =
+    new ContainerConstructor[K, Tile, RasterRDD[K]] {
+      type MetaDataType = RasterMetaData
+      implicit def metaDataFormat = geotrellis.spark.io.json.RasterMetaDataFormat
+
+      def getMetaData(raster: RasterRDD[K]): RasterMetaData =
+        raster.metaData
+
+      def makeContainer(rdd: RDD[(K, Tile)], bounds: KeyBounds[K], metadata: MetaDataType) =
+        new RasterRDD(rdd, metadata)
+
+      def combineMetaData(that: MetaDataType, other: MetaDataType): MetaDataType =
+        that.combine(other)
+    }
 }

@@ -41,7 +41,33 @@ class MaxDoubleSpec extends FunSpec
         )
 
         val result = inc.zonalMaxDouble(quarterExtent.toPolygon)
-        val expected = inc.stitch.zonalMaxDouble(totalExtent, quarterExtent.toPolygon)
+        val expected = inc.stitch.tile.zonalMaxDouble(totalExtent, quarterExtent.toPolygon)
+
+        result should be (expected)
+      }
+
+      it("should get correct double max over a two triangle multipolygon") {
+        val xd = totalExtent.xmax - totalExtent.xmin / 4
+        val yd = totalExtent.ymax - totalExtent.ymin / 4
+
+        val tri1 = Polygon( 
+          (totalExtent.xmin + (xd / 2), totalExtent.ymax - (yd / 2)),
+          (totalExtent.xmin + (xd / 2) + xd, totalExtent.ymax - (yd / 2)),
+          (totalExtent.xmin + (xd / 2) + xd, totalExtent.ymax - (yd)),
+          (totalExtent.xmin + (xd / 2), totalExtent.ymax - (yd / 2))
+        )
+
+        val tri2 = Polygon( 
+          (totalExtent.xmax - (xd / 2), totalExtent.ymin + (yd / 2)),
+          (totalExtent.xmax - (xd / 2) - xd, totalExtent.ymin + (yd / 2)),
+          (totalExtent.xmax - (xd / 2) - xd, totalExtent.ymin + (yd)),
+          (totalExtent.xmax - (xd / 2), totalExtent.ymin + (yd / 2))
+        )
+
+        val mp = MultiPolygon(tri1, tri2)
+
+        val result = inc.zonalMaxDouble(mp)
+        val expected = inc.stitch.tile.zonalMaxDouble(totalExtent, mp)
 
         result should be (expected)
       }

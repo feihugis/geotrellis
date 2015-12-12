@@ -1,5 +1,6 @@
 package geotrellis.spark.io.accumulo
 
+import com.typesafe.config.ConfigFactory
 import geotrellis.spark._
 import geotrellis.spark.io._
 import geotrellis.spark.io.json._
@@ -10,7 +11,7 @@ import DefaultJsonProtocol._
 import scala.collection.JavaConversions._
 
 import org.apache.spark.Logging
-import org.apache.accumulo.core.client.Connector
+import org.apache.accumulo.core.client.{BatchWriterConfig, Connector}
 import org.apache.accumulo.core.security.Authorizations
 import org.apache.accumulo.core.data._
 import org.apache.hadoop.io.Text
@@ -18,11 +19,12 @@ import org.apache.hadoop.io.Text
 object AccumuloAttributeStore { 
   def apply(connector: Connector, attributeTable: String): AccumuloAttributeStore =
     new AccumuloAttributeStore(connector, attributeTable)
+
+  def apply(connector: Connector): AccumuloAttributeStore =
+    apply(connector, ConfigFactory.load().getString("geotrellis.accumulo.catalog"))
 }
 
-class AccumuloAttributeStore(connector: Connector, val attributeTable: String) extends AttributeStore with Logging {
-  type ReadableWritable[T] = JsonFormat[T]
-
+class AccumuloAttributeStore(connector: Connector, val attributeTable: String) extends AttributeStore[JsonFormat] with Logging {
   //create the attribute table if it does not exist
   {
     val ops = connector.tableOperations()
@@ -30,19 +32,32 @@ class AccumuloAttributeStore(connector: Connector, val attributeTable: String) e
       ops.create(attributeTable)
   }
 
-  private def fetch(layerId: Option[LayerId], attributeName: String): Vector[Value] = {
+  private def fetch(layerId: Option[LayerId], attributeName: String): Iterator[Value] = {
     val scanner  = connector.createScanner(attributeTable, new Authorizations())
-    layerId.map { id => 
+    layerId.foreach { id =>
       scanner.setRange(new Range(new Text(id.toString)))
     }    
     scanner.fetchColumnFamily(new Text(attributeName))
-    scanner.iterator.toVector.map(_.getValue)
+    scanner.iterator.map(_.getValue)
   }
 
-  def read[T: ReadableWritable](layerId: LayerId, attributeName: String): T = {
-    val values = fetch(Some(layerId), attributeName)
+  private def delete(layerId: LayerId, attributeName: Option[String]): Unit = {
+    if(!layerExists(layerId)) throw new LayerNotFoundError(layerId)
+    val numThreads = 1
+    val config = new BatchWriterConfig()
+    config.setMaxWriteThreads(numThreads)
+    val deleter = connector.createBatchDeleter(attributeTable, new Authorizations(), numThreads, config)
+    deleter.setRanges(List(new Range(new Text(layerId.toString))))
+    attributeName.foreach { name =>
+      deleter.fetchColumnFamily(new Text(name))
+    }
+    deleter.delete()
+  }
 
-    if(values.size == 0) {
+  def read[T: Format](layerId: LayerId, attributeName: String): T = {
+    val values = fetch(Some(layerId), attributeName).toVector
+
+    if(values.isEmpty) {
       throw new AttributeNotFoundError(attributeName, layerId)
     } else if(values.size > 1) {
       throw new CatalogError(s"Multiple attributes found for $attributeName for layer $layerId")
@@ -51,13 +66,13 @@ class AccumuloAttributeStore(connector: Connector, val attributeTable: String) e
     }
   }
 
-  def readAll[T: ReadableWritable](attributeName: String): Map[LayerId,T] = {
+  def readAll[T: Format](attributeName: String): Map[LayerId,T] = {
     fetch(None, attributeName)
       .map{ _.toString.parseJson.convertTo[(LayerId, T)] }
       .toMap
   }
 
-  def write[T: ReadableWritable](layerId: LayerId, attributeName: String, value: T): Unit = {
+  def write[T: Format](layerId: LayerId, attributeName: String, value: T): Unit = {
     val mutation = new Mutation(layerId.toString)
     mutation.put(
       new Text(attributeName), new Text(), System.currentTimeMillis(),
@@ -67,4 +82,11 @@ class AccumuloAttributeStore(connector: Connector, val attributeTable: String) e
     connector.write(attributeTable, mutation)
   }
 
+  def layerExists(layerId: LayerId): Boolean = {
+    fetch(Some(layerId), AttributeStore.Fields.metaData).nonEmpty
+  }
+
+  def delete(layerId: LayerId): Unit = delete(layerId, None)
+
+  def delete(layerId: LayerId, attributeName: String): Unit = delete(layerId, Some(attributeName))
 }

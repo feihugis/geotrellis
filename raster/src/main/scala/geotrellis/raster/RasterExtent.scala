@@ -33,6 +33,11 @@ object CellSize {
     val (cols, rows) = dims
     apply(extent, cols, rows)
   }
+
+  def fromString(s:String) = {
+    val Array(width, height) = s.split(",").map(_.toDouble)
+    CellSize(width, height)
+  }
 }
 
 /**
@@ -75,6 +80,7 @@ case class RasterExtent(extent: Extent, cellwidth: Double, cellheight: Double, c
    * The size of the extent, e.g. cols * rows.
    */
   def size = cols * rows
+  def dimensions = (cols, rows)
 
   lazy val cellSize = CellSize(cellwidth, cellheight)
 
