@@ -16,24 +16,37 @@
 
 package geotrellis.vector
 
+import geotrellis.proj4.CRS
+
 import com.vividsolutions.jts.{geom => jts}
 import com.vividsolutions.jts.geom.TopologyException
 import GeomFactory._
-import geotrellis.proj4.CRS
 
+import scala.reflect.{ ClassTag, classTag }
+
+/** A trait inherited by classes which wrap a jts.Geometry */
 trait Geometry {
 
+  /** Return the wrapped jts Geometry */
   def jtsGeom: jts.Geometry
 
+  /** Check the validity of this geometry */
   def isValid: Boolean =
     jtsGeom.isValid
 
+  /** Calculate the distance to another Geometry */
   def distance(other: Geometry): Double =
     jtsGeom.distance(other.jtsGeom)
 
+  /** Determine whether another Geometry is within a given distance
+    *
+    * @param other The geometry to check
+    * @param dist The radius of the circle within which this check is conducted
+    */
   def withinDistance(other: Geometry, dist: Double): Boolean =
     jtsGeom.isWithinDistance(other.jtsGeom, dist)
 
+  /** Calculate centroid of this Geometry */
   def centroid: PointOrNoResult =
     jtsGeom.getCentroid
 
@@ -46,21 +59,31 @@ trait Geometry {
 
   def &(g: Geometry): TwoDimensionsTwoDimensionsIntersectionResult =
     intersection(g)
-  /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g.
-   */
+
+  /** Computes a Result that represents a Geometry made up of the points shared
+    * by this Polygon and g.
+    */
   def intersection(g: Geometry): TwoDimensionsTwoDimensionsIntersectionResult =
     jtsGeom.intersection(g.jtsGeom)
+
   /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g. If it fails, it reduces the precision to avoid [[TopologyException]].
-   */
+    * Computes a Result that represents a Geometry made up of the
+    * points shared by this Polygon and g. If it fails, it reduces the
+    * precision to avoid TopologyException.
+    */
   def safeIntersection(g: Geometry): TwoDimensionsTwoDimensionsIntersectionResult =
     try intersection(g)
     catch {
       case _: TopologyException => simplifier.reduce(jtsGeom).intersection(simplifier.reduce(g.jtsGeom))
     }
+
+  /** Attempt to convert this Geometry to the provided type */
+  def as[G <: Geometry : ClassTag]: Option[G] = {
+    if (classTag[G].runtimeClass.isInstance(this))
+      Some(this.asInstanceOf[G])
+    else
+      None
+  }
 
   override
   def equals(other: Any): Boolean =
@@ -75,12 +98,11 @@ trait Geometry {
   override def toString = jtsGeom.toString
 }
 
+/** Geometry companion object */
 object Geometry {
-  /**
-   * Wraps JTS Geometry in correct container and attempts to cast.
-   * Useful when sourcing objects from JTS interface.
-   */
-  def apply[G <: Geometry](obj: jts.Geometry): G = {
+
+  /** Wraps JTS Geometry in correct container. Useful when sourcing objects from JTS interface. */
+  implicit def apply(obj: jts.Geometry): Geometry =
     obj match {
       case obj: jts.Point => Point(obj)
       case obj: jts.LineString => Line(obj)
@@ -90,7 +112,6 @@ object Geometry {
       case obj: jts.MultiPolygon => MultiPolygon(obj)
       case obj: jts.GeometryCollection => GeometryCollection(obj)
     }
-  }.asInstanceOf[G]
 }
 
 trait Relatable { self: Geometry =>

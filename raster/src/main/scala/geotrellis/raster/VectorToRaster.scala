@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 Azavea.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,56 +18,47 @@ package geotrellis.raster
 
 import geotrellis.vector._
 import geotrellis.raster.rasterize._
-
+import geotrellis.raster.mapalgebra.focal.{Circle, Kernel, Square}
 import spire.syntax.cfor._
 
-object VectorToRaster { 
-
-  def kernelDensity[D](points: Seq[PointFeature[D]],
-                       kernel: Kernel, 
-                       rasterExtent: RasterExtent)
-                      (implicit transform:D => Int): Tile =
-    kernelDensity(points, transform, kernel, rasterExtent)
+/**
+  * Object that holds various functions for vector-to-raster
+  * computations.
+  */
+object VectorToRaster {
 
   /**
-    * Computes a Density raster based on the Kernel and set of points provided.
-    *
-    * @param      points           Sequence of point features who's values will be used to
-    *                              compute the density.
-    * @param      transform        Function that transforms the point feature's data into
-    *                              an Int value.
-    * @param      kernel           [[Kernel]] to be used in the computation.
-    * @param      rasterExtent     Raster extent of the resulting raster.
-    *
-    * @note                        KernelDensity does not currently support Double raster data.
-    *                              If you use a Raster with a Double CellType (TypeFloat, TypeDouble)
-    *                              the data values will be rounded to integers.
+    * Compute an Inverse Distance Weighting raster over the given
+    * extent from the given set known-points.  Please see
+    * https://en.wikipedia.org/wiki/Inverse_distance_weighting for
+    * more details.
     */
-  def kernelDensity[D](points: Seq[PointFeature[D]],
-                       transform: D => Int, 
-                       kernel: Kernel, 
-                       rasterExtent: RasterExtent): Tile = {
-    val convolver = new Convolver(rasterExtent.cols, rasterExtent.rows, kernel)
-    
-    for(point <- points) {
-      val col = rasterExtent.mapXToGrid(point.geom.x)
-      val row = rasterExtent.mapYToGrid(point.geom.y)
-      convolver.stampKernel(col, row, transform(point.data))
-    }
-
-    convolver.result
-  }
-
   def idwInterpolate(points: Seq[PointFeature[Int]], re: RasterExtent): Tile =
     idwInterpolate(points, re, None)
 
+  /**
+    * Compute an Inverse Distance Weighting raster over the given
+    * extent from the given set known-points.  Please see
+    * https://en.wikipedia.org/wiki/Inverse_distance_weighting for
+    * more details.
+    */
   def idwInterpolate(points: Seq[PointFeature[Int]], re: RasterExtent, radius: Int): Tile =
     idwInterpolate(points, re, Some(radius))
 
+  /**
+    * Compute an Inverse Distance Weighting raster over the given
+    * extent from the given set known-points.  Please see
+    * https://en.wikipedia.org/wiki/Inverse_distance_weighting for
+    * more details.
+    *
+    * @param   points  A collection of known-points
+    * @param   re      The study area
+    * @return          The data interpolated across the study area
+    */
   def idwInterpolate(points: Seq[PointFeature[Int]], re: RasterExtent, radius: Option[Int]): Tile = {
     val cols = re.cols
     val rows = re.rows
-    val tile = ArrayTile.empty(TypeInt, cols, rows)
+    val tile = ArrayTile.empty(IntConstantNoDataCellType, cols, rows)
     if(points.isEmpty) {
       tile
     } else {
@@ -81,7 +72,7 @@ object VectorToRaster {
               val destX = re.gridColToMap(col)
               val destY = re.gridRowToMap(row)
               val pts = index.pointsInExtent(Extent(destX - r, destY - r, destX + r, destY + r))
-              println(pts.size)
+
               if (pts.isEmpty) {
                 tile.set(col, row, NODATA)
               } else {
@@ -90,7 +81,7 @@ object VectorToRaster {
                 var ws = 0.0
                 val length = pts.size
 
-                cfor(0)(_ < length, _ + 1) { i => 
+                cfor(0)(_ < length, _ + 1) { i =>
                   val point = pts(i)
                   val dX = (destX - point.geom.x)
                   val dY = (destY - point.geom.y)
@@ -146,19 +137,13 @@ object VectorToRaster {
     }
   }
 
-  def rasterize(feature: Geometry, rasterExtent: RasterExtent)(f: Transformer[Int]): Tile =
-    Rasterizer.rasterize(feature, rasterExtent)(f)
-
-  def rasterize(feature: Geometry, rasterExtent: RasterExtent, value:Int): Tile =
-    Rasterizer.rasterizeWithValue(feature, rasterExtent, value)
-
-/**
- * Gives a raster that represents the number of occuring points per cell.
- * 
- *  @param points               Sequence of points to be counted.
- *  @param rasterExtent         RasterExtent of the resulting raster.
- * 
- */
+  /**
+    * Gives a raster that represents the number of occurring points per
+    * cell.
+    *
+    * @param points        Sequence of points to be counted.
+    * @param rasterExtent  RasterExtent of the resulting raster.
+    */
   def countPoints(points: Seq[Point], rasterExtent: RasterExtent): Tile = {
     val (cols, rows) = (rasterExtent.cols, rasterExtent.rows)
     val array = Array.ofDim[Int](cols * rows).fill(0)

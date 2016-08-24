@@ -12,35 +12,32 @@ import geotrellis.spark.testfiles._
 import org.scalatest._
 import java.io.File
 
-class HadoopSlippyTileWriterSpec 
-    extends FunSpec 
-    with Matchers 
-    with TestEnvironment 
+class HadoopSlippyTileWriterSpec
+    extends FunSpec
+    with Matchers
+    with TestEnvironment
     with TestFiles
-    with RasterRDDMatchers
-    with OnlyIfCanRunSpark {
+{
   describe("HadoopSlippyTileWriter") {
     val testPath = new File(outputLocalPath, "slippy-write-test").getPath
 
-    ifCanRunSpark {
-      it("can write slippy tiles") {
-        val mapTransform = ZoomedLayoutScheme(WebMercator).levelForZoom(TestFiles.ZOOM_LEVEL).layout.mapTransform
+    it("can write slippy tiles") {
+      val mapTransform = ZoomedLayoutScheme(WebMercator).levelForZoom(TestFiles.ZOOM_LEVEL).layout.mapTransform
 
-        val writer =
-          new HadoopSlippyTileWriter[Tile](testPath, "tif")({ (key, tile) =>
-            SingleBandGeoTiff(tile, mapTransform(key), WebMercator).toByteArray
-          })
+      val writer =
+        new HadoopSlippyTileWriter[Tile](testPath, "tif")({ (key, tile) =>
+          SinglebandGeoTiff(tile, mapTransform(key), WebMercator).toByteArray
+        })
 
-        writer.write(TestFiles.ZOOM_LEVEL, AllOnesTestFile)
+      writer.write(TestFiles.ZOOM_LEVEL, AllOnesTestFile)
 
-        val reader =
-          new FileSlippyTileReader[Tile](testPath)({ (key, bytes) =>
-            SingleBandGeoTiff(bytes).tile
-          })
+      val reader =
+        new FileSlippyTileReader[Tile](testPath)({ (key, bytes) =>
+          SinglebandGeoTiff(bytes).tile
+        })
 
-        rastersEqual(reader.read(TestFiles.ZOOM_LEVEL), AllOnesTestFile)
+      rastersEqual(reader.read(TestFiles.ZOOM_LEVEL), AllOnesTestFile)
 
-      }
     }
   }
 }

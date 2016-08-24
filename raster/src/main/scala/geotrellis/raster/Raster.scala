@@ -1,78 +1,80 @@
 package geotrellis.raster
 
+import geotrellis.proj4.CRS
 import geotrellis.raster.reproject._
 import geotrellis.raster.resample._
 import geotrellis.vector._
-import geotrellis.proj4.CRS
 
+
+/**
+  * The companion object for the [[Raster]] type.
+  */
 object Raster {
-  def apply(feature: Feature[Extent, Tile]): Raster =
-    Raster(feature.data, feature.geom)
+  def apply[T <: CellGrid](feature: PolygonFeature[T]): Raster[T] =
+    Raster(feature.data, feature.geom.envelope)
 
-  implicit def tupToRaster(tup: (Tile, Extent)): Raster =
+  /**
+    * Implicit conversion from a [[Tile]], Extent pair to a
+    * [[Raster]].
+    */
+  implicit def tupToRaster(tup: (Tile, Extent)): Raster[Tile] =
     Raster(tup._1, tup._2)
 
-  implicit def tupSwapToRaster(tup: (Extent, Tile)): Raster =
+  /**
+    * Implicit conversion from an Extent, [[Tile]] pair to a
+    * [[Raster]].
+    */
+  implicit def tupSwapToRaster(tup: (Extent, Tile)): Raster[Tile] =
     Raster(tup._2, tup._1)
 
-  implicit def rasterToTile(r: Raster): Tile =
+  /**
+    * Implicit conversion from a [[Raster]] to a [[CellGrid]].
+    */
+  implicit def rasterToTile[T <: CellGrid](r: Raster[T]): T =
     r.tile
 
-  implicit def rasterToFeature(r: Raster): Feature[Extent, Tile] =
+  /**
+    * Implicit conversion from a [[Raster]] to a PolygonFeature.
+    */
+  implicit def rasterToFeature[T <: CellGrid](r: Raster[T]): PolygonFeature[T] =
     r.asFeature
 
-  implicit def featureToRaster(feature: Feature[Extent, Tile]): Raster =
+  /**
+    * Implicit conversion from a PolygonFeature to a [[Raster]].
+    */
+  implicit def featureToRaster[T <: CellGrid](feature: PolygonFeature[T]): Raster[T] =
      apply(feature)
 }
 
-case class Raster(tile: Tile, extent: Extent) extends Product2[Tile, Extent] {
-  lazy val rasterExtent = RasterExtent(extent, tile.cols, tile.rows)
+/**
+  * The [[Raster]] type.
+  */
+case class Raster[+T <: CellGrid](tile: T, extent: Extent) extends Product2[T, Extent] with CellGrid {
+
+  /**
+    * Return the [[RasterExtent]] that is correspondent to this
+    * [[Raster]].
+    */
+  def rasterExtent: RasterExtent = RasterExtent(extent, tile.cols, tile.rows)
+
+  /**
+    * Return the [[CellSize]] of this [[Raster]].
+    */
+  def cellSize: CellSize = rasterExtent.cellSize
 
   def cols: Int = tile.cols
   def rows: Int = tile.rows
+  def cellType: CellType = tile.cellType
 
-  def asFeature(): Feature[Extent, Tile] = ExtentFeature(extent, tile)
+  /**
+    * Return the PolygonFeature associated with the extent of this
+    * [[Raster]].
+    */
+  def asFeature(): PolygonFeature[T] = PolygonFeature(extent.toPolygon, tile: T)
 
-  def getValueAtPoint(point: Point): Int =
-    getValueAtPoint(point.x, point.y)
+  def mapTile[A <: CellGrid](f: T => A): Raster[A] = Raster(f(tile), extent)
 
-  def getValueAtPoint(x: Double, y: Double): Int =
-    tile.get(
-      rasterExtent.mapXToGrid(x),
-      rasterExtent.mapYToGrid(y)
-    )
+  def _1: T = tile
 
-  def getDoubleValueAtPoint(point: Point): Double =
-    getDoubleValueAtPoint(point.x, point.y)
-
-  def getDoubleValueAtPoint(x: Double, y: Double): Double =
-    tile.getDouble(
-      rasterExtent.mapXToGrid(x),
-      rasterExtent.mapYToGrid(y)
-    )
-
-  def resample(target: RasterExtent): Raster =
-    Raster(tile.resample(extent, target), target.extent)
-
-  def resample(target: Extent): Raster =
-    Raster(tile.resample(extent, target), target)
-
-  def resample(targetCols: Int, targetRows: Int): Raster =
-    Raster(tile.resample(extent, targetCols, targetRows), extent)
-
-  def crop(target: Extent): Raster =
-    Raster(tile.crop(extent, target), target)
-
-  def reproject(src: CRS, dest: CRS): Raster =
-    tile.reproject(extent, src, dest)
-
-  def reproject(method: ResampleMethod, src: CRS, dest: CRS): Raster =
-    tile.reproject(extent, src, dest, ReprojectOptions(method = method))
-
-  def reproject(src: CRS, dest: CRS, options: ReprojectOptions): Raster =
-    tile.reproject(extent, src, dest, options)
-
-  def _1 = tile
-
-  def _2 = extent
+  def _2: Extent = extent
 }

@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 Azavea.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -45,12 +45,13 @@ object MultiPolygon {
   implicit def jts2MultiPolygon(jtsGeom: jts.MultiPolygon): MultiPolygon = apply(jtsGeom)
 }
 
+/** Class representing a geometry of multiple polygons */
 case class MultiPolygon(jtsGeom: jts.MultiPolygon) extends MultiGeometry
                                                    with Relatable
                                                    with TwoDimensions {
 
   /** Returns a unique representation of the geometry based on standard coordinate ordering. */
-  def normalized(): MultiPolygon = { 
+  def normalized(): MultiPolygon = {
     val geom = jtsGeom.clone.asInstanceOf[jts.MultiPolygon]
     geom.normalize
     MultiPolygon(geom)
@@ -143,10 +144,10 @@ case class MultiPolygon(jtsGeom: jts.MultiPolygon) extends MultiGeometry
   def union(l: Line): LineMultiPolygonUnionResult =
     l.union(this)
 
-  def |(p: Polygon): TwoDimensionsTwoDimensionsUnionResult =
+  def |(p: Polygon): TwoDimensionsTwoDimensionsSeqUnionResult =
     union(p)
 
-  def union(p: Polygon): TwoDimensionsTwoDimensionsUnionResult = {
+  def union(p: Polygon): TwoDimensionsTwoDimensionsSeqUnionResult = {
     (this.polygons :+ p).toSeq.unionGeometries
   }
 
@@ -159,12 +160,12 @@ case class MultiPolygon(jtsGeom: jts.MultiPolygon) extends MultiGeometry
   def union(ls: MultiLine): LineMultiPolygonUnionResult =
     jtsGeom.union(ls.jtsGeom)
 
-  def |(ps: MultiPolygon): TwoDimensionsTwoDimensionsUnionResult =
+  def |(ps: MultiPolygon): TwoDimensionsTwoDimensionsSeqUnionResult =
     union(ps)
-  def union(ps: MultiPolygon): TwoDimensionsTwoDimensionsUnionResult =
+  def union(ps: MultiPolygon): TwoDimensionsTwoDimensionsSeqUnionResult =
     (this.polygons ++ ps.polygons).toSeq.unionGeometries
 
-  def union: TwoDimensionsTwoDimensionsUnionResult =
+  def union: TwoDimensionsTwoDimensionsSeqUnionResult =
     polygons.toSeq.unionGeometries
 
   // -- Difference

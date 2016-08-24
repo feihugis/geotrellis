@@ -3,10 +3,13 @@ package geotrellis.spark.tiling
 import geotrellis.spark._
 import geotrellis.raster._
 import geotrellis.vector._
-import geotrellis.vector.reproject._
 import geotrellis.proj4._
+import geotrellis.util._
 
 object MapKeyTransform {
+  def apply(crs: CRS, level: LayoutLevel): MapKeyTransform =
+    apply(crs.worldExtent, level.layout.layoutCols, level.layout.layoutRows)
+
   def apply(crs: CRS, layoutDimensions: (Int, Int)): MapKeyTransform =
     apply(crs.worldExtent, layoutDimensions)
 
@@ -23,29 +26,35 @@ object MapKeyTransform {
 /**
   * Transforms between geographic map coordinates and spatial keys.
   * Since geographic point can only be mapped to a grid tile that contains that point,
-  * transformation from [[Extent]] to [[GridBounds]] to [[Extent]] will likely not
+  * transformation from Extent to GridBounds to Extent will likely not
   * produce the original geographic extent, but a larger one.
   */
-class MapKeyTransform(extent: Extent, layoutCols: Int, layoutRows: Int) extends Serializable {
+class MapKeyTransform(val extent: Extent, val layoutCols: Int, val layoutRows: Int) extends Serializable {
   lazy val tileWidth: Double = extent.width / layoutCols
   lazy val tileHeight: Double = extent.height / layoutRows
 
   def apply(otherExtent: Extent): GridBounds = {
     val SpatialKey(colMin, rowMin) = apply(otherExtent.xmin, otherExtent.ymax)
 
-    // Pay attention to the exclusitivity of the east and south extent border.
+    // For calculating GridBounds, the extent parameter is considered
+    // inclusive on it's north and west borders, and execlusive on
+    // it's east and south borders.
+    // If the Extent has xmin == xmax and/or ymin == ymax, then consider
+    // those zero length dimensions to represent the west and/or east
+    // borders (so they are inclusive). In this case, the tiles returned
+    // will be south and/or east of the line or point.
     val colMax = {
-      val d = (otherExtent.xmax - extent.xmin) / extent.width
+      val d = (otherExtent.xmax - extent.xmin) / (extent.width / layoutCols)
 
-      if(d == math.floor(d)) { (d * layoutCols).toInt - 1 }
-      else { (d * layoutCols).toInt }
+      if(d == math.floor(d) && d != colMin) { d.toInt - 1 }
+      else { d.toInt }
     }
 
     val rowMax = {
-      val d = (extent.ymax - otherExtent.ymin) / extent.height
+      val d = (extent.ymax - otherExtent.ymin) / (extent.height / layoutRows)
 
-      if(d == math.floor(d)) { (d * layoutRows).toInt - 1 }
-      else { (d * layoutRows).toInt } 
+      if(d == math.floor(d) && d != rowMin) { d.toInt - 1 }
+      else { d.toInt }
     }
 
     GridBounds(colMin, rowMin, colMax, rowMax)
@@ -71,7 +80,7 @@ class MapKeyTransform(extent: Extent, layoutCols: Int, layoutRows: Int) extends 
   }
 
   def apply[K: SpatialComponent](key: K): Extent = {
-    apply(key.spatialComponent)
+    apply(key.getComponent[SpatialKey])
   }
 
   def apply(key: SpatialKey): Extent =

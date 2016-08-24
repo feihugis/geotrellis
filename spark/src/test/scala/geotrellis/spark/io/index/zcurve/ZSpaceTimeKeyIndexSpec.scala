@@ -1,20 +1,22 @@
 package geotrellis.spark.io.index.zcurve
 
-import org.scalatest._
-import geotrellis.spark.SpaceTimeKey
+import geotrellis.spark._
+
 import org.joda.time.DateTime
+import org.scalatest._
 import scala.collection.immutable.TreeSet
 
 class ZSpaceTimeKeySpec extends FunSpec with Matchers{
   val y2k = new DateTime(2000, 1, 1, 0, 0)
   val upperBound = 8
+  val keyBounds = KeyBounds(SpaceTimeKey(0, 0, 0L), SpaceTimeKey(100, 100, 100L))
 
   describe("ZSpaceTimeKey test"){
 
     it("indexes time"){
-      val zst = new ZSpaceTimeKeyIndex({ dt => dt.getYear })
+      val zst = ZSpaceTimeKeyIndex.byYear(keyBounds)
 
-      val keys = 
+      val keys =
         for(col <- 0 until upperBound;
              row <- 0 until upperBound;
                 t <- 0 until upperBound) yield {
@@ -27,7 +29,7 @@ class ZSpaceTimeKeySpec extends FunSpec with Matchers{
     }
 
     it("generates indexes you can check by hand 2x2x2"){
-     val zst = ZSpaceTimeKeyIndex({dt => dt.getMillis.toInt})
+     val zst = ZSpaceTimeKeyIndex.byMilliseconds(keyBounds, 1)
      val idx = List[SpaceTimeKey](
                                   SpaceTimeKey(0,0, y2k),
                                   SpaceTimeKey(1,0, y2k),
@@ -46,55 +48,54 @@ class ZSpaceTimeKeySpec extends FunSpec with Matchers{
     }
 
     it("generates a Seq[(Long,Long)] from a keyRange: (SpaceTimeKey, SpaceTimeKey)"){
-      val zst = ZSpaceTimeKeyIndex({dt => dt.getMillis.toInt})
+     val zst = ZSpaceTimeKeyIndex.byMilliseconds(keyBounds, 1)
 
       //all sub cubes in a 2x2x2
       var idx = zst.indexRanges((SpaceTimeKey(0,0,y2k), SpaceTimeKey(1,1,y2k.plusMillis(1))))
       idx.length should be (1)
-      (idx(0)._2 - idx(0)._1) should be (7) 
-    
+      (idx(0)._2 - idx(0)._1) should be (7)
+
       //sub cubes along x
       idx = zst.indexRanges((SpaceTimeKey(0,0,y2k), SpaceTimeKey(1,0,y2k.plusMillis(1))))
       idx.length should be (2)
-      (idx(0)._2 - idx(0)._1) should be (1) 
-      (idx(1)._2 - idx(1)._1) should be (1) 
-    
+      (idx(0)._2 - idx(0)._1) should be (1)
+      (idx(1)._2 - idx(1)._1) should be (1)
+
       //next sub cubes along x
       idx = zst.indexRanges((SpaceTimeKey(0,1,y2k), SpaceTimeKey(1,1,y2k.plusMillis(1))))
       idx.length should be (2)
-      (idx(0)._2 - idx(0)._1) should be (1) 
-      (idx(1)._2 - idx(1)._1) should be (1) 
-    
+      (idx(0)._2 - idx(0)._1) should be (1)
+      (idx(1)._2 - idx(1)._1) should be (1)
+
       //sub cubes along y
       idx = zst.indexRanges((SpaceTimeKey(0,0,y2k), SpaceTimeKey(0,1,y2k.plusMillis(1))))
       idx.length should be (4)
-      (idx(0)._2 - idx(0)._1) should be (0) 
-      (idx(1)._2 - idx(1)._1) should be (0) 
-      (idx(2)._2 - idx(2)._1) should be (0) 
-      (idx(3)._2 - idx(3)._1) should be (0) 
-    
+      (idx(0)._2 - idx(0)._1) should be (0)
+      (idx(1)._2 - idx(1)._1) should be (0)
+      (idx(2)._2 - idx(2)._1) should be (0)
+      (idx(3)._2 - idx(3)._1) should be (0)
+
       //next sub cubes along y
       idx = zst.indexRanges((SpaceTimeKey(1,0,y2k), SpaceTimeKey(1,1,y2k.plusMillis(1))))
       idx.length should be (4)
-      (idx(0)._2 - idx(0)._1) should be (0) 
-      (idx(1)._2 - idx(1)._1) should be (0) 
-      (idx(2)._2 - idx(2)._1) should be (0) 
-      (idx(3)._2 - idx(3)._1) should be (0) 
-    
+      (idx(0)._2 - idx(0)._1) should be (0)
+      (idx(1)._2 - idx(1)._1) should be (0)
+      (idx(2)._2 - idx(2)._1) should be (0)
+      (idx(3)._2 - idx(3)._1) should be (0)
+
       //sub cubes along z
       idx = zst.indexRanges( (SpaceTimeKey(0,0,y2k.plusMillis(1)), SpaceTimeKey(1,1,y2k.plusMillis(1))))
       idx.length should be (1)
-      (idx(0)._2 - idx(0)._1) should be (3) 
-    
+      (idx(0)._2 - idx(0)._1) should be (3)
+
       //sub cubes along z
       idx = zst.indexRanges((SpaceTimeKey(0,0,y2k), SpaceTimeKey(1,1,y2k)))
       idx.length should be (1)
-      (idx(0)._2 - idx(0)._1) should be (3) 
+      (idx(0)._2 - idx(0)._1) should be (3)
     }
 
-    it("generates indexes by string pattern") {
-      val pattern = "YM" //by months
-      val zst = ZSpaceTimeKeyIndex.byPattern(pattern)
+    it("generates indexes by month") {
+      val zst = ZSpaceTimeKeyIndex.byMonth(keyBounds)
 
       val keys =
         for(col <- 0 until upperBound;

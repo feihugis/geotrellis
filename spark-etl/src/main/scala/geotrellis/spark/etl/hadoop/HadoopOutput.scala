@@ -1,16 +1,15 @@
 package geotrellis.spark.etl.hadoop
 
 import geotrellis.spark.etl.OutputPlugin
-import geotrellis.spark.io.hadoop.HadoopAttributeStore
+import geotrellis.spark.etl.config.EtlConf
+import geotrellis.spark.io.hadoop._
 import org.apache.spark.SparkConf
 import org.apache.spark.deploy.SparkHadoopUtil
-import org.apache.hadoop.fs.Path
 
-trait HadoopOutput[K] extends OutputPlugin[K] {
+trait HadoopOutput[K, V, M] extends OutputPlugin[K, V, M] {
   val name = "hadoop"
-  val requiredKeys = Array("path")
 
   //This should be a safe way to get a hadoop configuration that includes all the environment changes from spark
-  def attributes(props: Map[String, String]) =
-    new HadoopAttributeStore(SparkHadoopUtil.get.newConfiguration(new SparkConf()), new Path(props("path"), "attributes"))
+  def attributes(conf: EtlConf) =
+    HadoopAttributeStore(getPath(conf.output.backend).path, SparkHadoopUtil.get.newConfiguration(new SparkConf()))
 }

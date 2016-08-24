@@ -17,43 +17,22 @@
 package geotrellis.raster.io.arg
 
 import geotrellis.raster._
-import geotrellis.engine._
+import geotrellis.raster.io.geotiff.reader.GeoTiffReader
 import geotrellis.vector.Extent
-import geotrellis.testkit._
+import geotrellis.raster.testkit._
 
 import org.scalatest._
 
 class ArgReaderSpec extends FunSpec
-                       with TestEngine 
-                       with Matchers {
+                            with RasterMatchers
+                            with TestFiles
+                            with Matchers {
   describe("ArgReader") {
-    TestEngine.init
-
-    it("should read from metadata and match a RasterSource") {
-      val fromRasterSource = RasterSource("SBN_inc_percap").get
-      val fromArgReader = ArgReader.read("raster-test/data/sbn/SBN_inc_percap.json").tile
-
-      assertEqual(fromArgReader, fromRasterSource)
-    }
-
-    it("should read from metadata and match a RasterSource with a target RasterExtent") {
-      val RasterExtent(Extent(xmin, ymin, xmax, ymax), cw, ch, cols, rows) = 
-        RasterSource("SBN_inc_percap").rasterExtent.get
-      val qw = (xmax - xmin) / 4
-      val qh = (ymax - ymin) / 4
-      val target = RasterExtent(Extent(xmin + qw, ymin + qh, xmax - qw, ymax - qh), cols / 3, rows / 3)
-
-      val fromRasterSource = RasterSource("SBN_inc_percap", target).get
-      val fromArgReader = ArgReader.read("raster-test/data/sbn/SBN_inc_percap.json", target).tile
-
-      assertEqual(fromArgReader, fromRasterSource)
-    }
-
     it("should read a constant tile") {
       val tile = ArgReader.read("raster-test/data/data/constant.json").tile
       tile match {
         case ct: ConstantTile => 
-          tile.cellType should be (TypeInt)
+          tile.cellType should be (IntConstantNoDataCellType)
           tile.get(0,0) should be (5)
         case _ => sys.error(s"Tile should be constant tile, is actually ${tile.getClass.getSimpleName}")
       }
@@ -63,7 +42,7 @@ class ArgReaderSpec extends FunSpec
       val tile = ArgReader.read("raster-test/data/data/constant-nan.json").tile
       tile match {
         case ct: ConstantTile => 
-          tile.cellType should be (TypeDouble)
+          tile.cellType should be (DoubleConstantNoDataCellType)
           isNoData(tile.getDouble(0,0)) should be (true)
         case _ => sys.error(s"Tile should be constant tile, is actually ${tile.getClass.getSimpleName}")
       }

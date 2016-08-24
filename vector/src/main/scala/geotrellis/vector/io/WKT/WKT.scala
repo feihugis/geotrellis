@@ -20,16 +20,14 @@ import com.vividsolutions.jts.io.{WKTReader, WKTWriter}
 import com.vividsolutions.jts.{geom => jts}
 import geotrellis.vector._
 
-/**
- * Wraps WKT Writer and Reader, thread safe
- */
+/** A thread-safe wrapper for the WKT Writer and Reader */
 object WKT {
   private val readerBox = new ThreadLocal[WKTReader]
   private val writerBox = new ThreadLocal[WKTWriter]
 
-  def read[G <: Geometry](value: String): G = {
+  def read(value: String): Geometry = {
     if (readerBox.get == null) readerBox.set(new WKTReader(GeomFactory.factory))
-    Geometry[G](readerBox.get.read(value))
+    Geometry(readerBox.get.read(value))
   }
 
   def write(geom: Geometry): String = {

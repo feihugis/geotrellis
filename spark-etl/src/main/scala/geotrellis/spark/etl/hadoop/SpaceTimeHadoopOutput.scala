@@ -1,12 +1,14 @@
 package geotrellis.spark.etl.hadoop
 
 import geotrellis.raster.Tile
-import geotrellis.spark.io.hadoop.HadoopLayerWriter
-import geotrellis.spark.io.index.KeyIndexMethod
-import geotrellis.spark.{SpaceTimeKey, RasterRDD}
-import org.apache.hadoop.fs.Path
+import geotrellis.spark._
+import geotrellis.spark.etl.config.EtlConf
+import geotrellis.spark.io._
+import geotrellis.spark.io.hadoop._
 
-class SpaceTimeHadoopOutput extends HadoopOutput[SpaceTimeKey] {
-  def writer(method: KeyIndexMethod[SpaceTimeKey], props: Parameters) =
-    HadoopLayerWriter[SpaceTimeKey, Tile, RasterRDD](new Path(props("path")), method)
+import org.apache.spark.SparkContext
+
+class SpaceTimeHadoopOutput extends HadoopOutput[SpaceTimeKey, Tile, TileLayerMetadata[SpaceTimeKey]] {
+  def writer(conf: EtlConf)(implicit sc: SparkContext) =
+    HadoopLayerWriter(getPath(conf.output.backend).path).writer[SpaceTimeKey, Tile, TileLayerMetadata[SpaceTimeKey]](conf.output.getKeyIndexMethod[SpaceTimeKey])
 }

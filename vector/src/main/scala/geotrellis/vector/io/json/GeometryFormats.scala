@@ -3,10 +3,9 @@ package geotrellis.vector.io.json
 import geotrellis.vector._
 import spray.json._
 
-/**
- * Implements Spray JsonFormats for Geometry objects.
- * Import or extend this object directly to use them with default spray-json (un)marshaller
- */
+/** A trait that implements Spray JsonFormats for Geometry objects.
+  * @note Import or extend this object directly to use them with default spray-json (un)marshaller
+  */
 trait GeometryFormats {
   /** Writes point to JsArray as [x, y] */
   private def writePointCoords(point: Point): JsArray =
@@ -96,6 +95,10 @@ trait GeometryFormats {
     )
   }
 
+  /** Extent gets it's own non-GeoJson JSON representation.
+    * If you're using the Extent as a geometry, however, it gets converted
+    * to a Polygon and written out in GeoJson as a Polygon
+    */
   implicit object ExtentFormat extends RootJsonFormat[Extent] {
     def write(extent: Extent) = 
       JsObject(
@@ -110,7 +113,7 @@ trait GeometryFormats {
         case Seq(JsNumber(xmin), JsNumber(ymin), JsNumber(xmax), JsNumber(ymax)) =>
           Extent(xmin.toDouble, ymin.toDouble, xmax.toDouble, ymax.toDouble)
         case _ =>
-          throw new DeserializationException("Extent [xmin,ymin,xmax,ymax] expected")
+          throw new DeserializationException(s"Extent [xmin,ymin,xmax,ymax] expected: $value")
       }
   }
 
@@ -185,15 +188,16 @@ trait GeometryFormats {
   }
 
   implicit object GeometryFormat extends RootJsonFormat[Geometry] {
-    def write(o: Geometry) = o match {
-      case o: Point => o.toJson
-      case o: Line => o.toJson
-      case o: Polygon => o.toJson
-      case o: MultiPolygon => o.toJson
-      case o: MultiPoint => o.toJson
-      case o: MultiLine => o.toJson
-      case o: GeometryCollection => o.toJson
-      case _ => throw new SerializationException("Unknown Geometry")
+    def write(geom: Geometry) = geom match {
+      case geom: Point => geom.toJson
+      case geom: Line => geom.toJson
+      case geom: Polygon => geom.toJson
+      case geom: Extent => geom.toPolygon.toJson
+      case geom: MultiPolygon => geom.toJson
+      case geom: MultiPoint => geom.toJson
+      case geom: MultiLine => geom.toJson
+      case geom: GeometryCollection => geom.toJson
+      case _ => throw new SerializationException("Unknown Geometry type ${geom.getClass.getName}: $geom")
     }
 
     def read(value: JsValue) = value.asJsObject.getFields("type") match {
@@ -209,11 +213,7 @@ trait GeometryFormats {
     }
   }
 
-  /**
-   * If given JSON is actually a Feature we extract 'geometry' field and discard the rest,
-   * in all other cases the value is returned unaltered.
-   * Thus we can comperehand any Feature as a Geometry if we don't care about 'properties'.
-   */
+  /** Unwrap feature geometry (ignoring its properties) */
   private def unwrapFeature(value: JsValue): JsValue = {
     value.asJsObject.getFields("type", "geometry") match {
       case Seq(JsString("Feature"), geom) =>  geom

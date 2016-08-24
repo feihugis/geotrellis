@@ -18,10 +18,12 @@ package geotrellis.vector
 
 import com.vividsolutions.jts.geom.TopologyException
 import com.vividsolutions.jts.{geom => jts}
+import com.vividsolutions.jts.operation.union._
 import GeomFactory._
 import geotrellis.vector._
 
 import spire.syntax.cfor._
+import scala.collection.JavaConversions._
 
 object Polygon {
   implicit def jtsToPolygon(jtsGeom: jts.Polygon): Polygon =
@@ -36,7 +38,7 @@ object Polygon {
   def apply(exterior: Line): Polygon =
     apply(exterior, Set())
 
-  def apply(exterior: Line, holes:Line*): Polygon = 
+  def apply(exterior: Line, holes:Line*): Polygon =
     apply(exterior, holes)
 
   def apply(exterior: Line, holes:Traversable[Line]): Polygon = {
@@ -62,22 +64,19 @@ object Polygon {
         }
       }).toArray
 
-    val p = factory.createPolygon(extGeom, holeGeoms)
-    // Sometimes polygons are invalid even if they aren't.
-    // Try buffer(0) per http://tsusiatsoftware.net/jts/jts-faq/jts-faq.html#G
-    if(!p.isValid) { p.buffer(0).asInstanceOf[jts.Polygon] }
-    else { p }
+    Polygon(factory.createPolygon(extGeom, holeGeoms))
   }
 }
 
-case class Polygon(jtsGeom: jts.Polygon) extends Geometry 
+/** Class representing a polygon */
+case class Polygon(jtsGeom: jts.Polygon) extends Geometry
                                             with Relatable
                                             with TwoDimensions {
 
   assert(!jtsGeom.isEmpty, s"Polygon Empty: $jtsGeom")
 
   /** Returns a unique representation of the geometry based on standard coordinate ordering. */
-  def normalized(): Polygon = { 
+  def normalized(): Polygon = {
     val geom = jtsGeom.clone.asInstanceOf[jts.Polygon]
     geom.normalize
     Polygon(geom)
@@ -156,9 +155,10 @@ case class Polygon(jtsGeom: jts.Polygon) extends Geometry
     jtsGeom.intersection(p.jtsGeom)
 
   /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g. If it fails, it reduces the precision to avoid [[TopologyException]].
-   */
+    * Computes a Result that represents a Geometry made up of the
+    * points shared by this Polygon and g. If it fails, it reduces the
+    * precision to avoid TopologyException.
+    */
   def safeIntersection(p: Point): PointOrNoResult =
     try intersection(p)
     catch {
@@ -180,9 +180,10 @@ case class Polygon(jtsGeom: jts.Polygon) extends Geometry
     jtsGeom.intersection(mp.jtsGeom)
 
   /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g. If it fails, it reduces the precision to avoid [[TopologyException]].
-   */
+    * Computes a Result that represents a Geometry made up of the
+    * points shared by this Polygon and g. If it fails, it reduces the
+    * precision to avoid TopologyException.
+    */
   def safeIntersection(mp: MultiPoint): MultiPointAtLeastOneDimensionIntersectionResult =
     try intersection(mp)
     catch {
@@ -204,9 +205,10 @@ case class Polygon(jtsGeom: jts.Polygon) extends Geometry
     jtsGeom.intersection(g.jtsGeom)
 
   /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g. If it fails, it reduces the precision to avoid [[TopologyException]].
-   */
+    * Computes a Result that represents a Geometry made up of the
+    * points shared by this Polygon and g. If it fails, it reduces the
+    * precision to avoid TopologyException.
+    */
   def safeIntersection(g: OneDimension): OneDimensionAtLeastOneDimensionIntersectionResult =
     try intersection(g)
     catch {
@@ -228,9 +230,10 @@ case class Polygon(jtsGeom: jts.Polygon) extends Geometry
     jtsGeom.intersection(g.jtsGeom)
 
   /**
-   * Computes a Result that represents a Geometry made up of the points shared
-   * by this Polygon and g. If it fails, it reduces the precision to avoid [[TopologyException]].
-   */
+    * Computes a Result that represents a Geometry made up of the
+    * points shared by this Polygon and g. If it fails, it reduces the
+    * precision to avoid TopologyException.
+    */
   def safeIntersection(g: TwoDimensions): TwoDimensionsTwoDimensionsIntersectionResult =
     try intersection(g)
     catch {
@@ -266,9 +269,12 @@ case class Polygon(jtsGeom: jts.Polygon) extends Geometry
    * else falls back to default jts union method.
    */
   def union(g: TwoDimensions): TwoDimensionsTwoDimensionsUnionResult = g match {
-    case p:Polygon => Seq(this, p).unionGeometries
-    case mp:MultiPolygon => (this +: mp.polygons).toSeq.unionGeometries
-    case _ => jtsGeom.union(g.jtsGeom)
+    case p:Polygon =>
+      new CascadedPolygonUnion(Seq(this, p).map(_.jtsGeom)).union
+    case mp:MultiPolygon =>
+      new CascadedPolygonUnion((this +: mp.polygons).map(_.jtsGeom).toSeq).union
+    case _ =>
+      jtsGeom.union(g.jtsGeom)
   }
 
 

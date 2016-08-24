@@ -16,15 +16,20 @@
 
 package geotrellis.spark.ingest
 
-import geotrellis.raster.reproject.ReprojectOptions
+import geotrellis.proj4._
+import geotrellis.raster._
 import geotrellis.raster.resample.{ResampleMethod, NearestNeighbor}
 import geotrellis.spark._
-import geotrellis.spark.tiling._
+import geotrellis.spark.pyramid.Pyramid
 import geotrellis.spark.reproject._
-import geotrellis.raster._
-import geotrellis.proj4._
+import geotrellis.spark.tiling._
+import geotrellis.vector._
+import geotrellis.util._
+
+import org.apache.spark.Partitioner
 import org.apache.spark.rdd._
 import org.apache.spark.storage.StorageLevel
+
 import scala.reflect.ClassTag
 
 object Ingest {
@@ -35,12 +40,12 @@ object Ingest {
    * The ingest process has the following steps:
    *
    *  - Reproject tiles to the desired CRS:  (CRS, RDD[(Extent, CRS), Tile)]) -> RDD[(Extent, Tile)]
-   *  - Determine the appropriate layer meta data for the layer. (CRS, LayoutScheme, RDD[(Extent, Tile)]) -> LayerMetaData)
-   *  - Resample the rasters into the desired tile format. RDD[(Extent, Tile)] => RasterRDD[K]
+   *  - Determine the appropriate layer meta data for the layer. (CRS, LayoutScheme, RDD[(Extent, Tile)]) -> LayerMetadata)
+   *  - Resample the rasters into the desired tile format. RDD[(Extent, Tile)] => TileLayerRDD[K]
    *  - Optionally pyramid to top zoom level, calling sink at each level
    *
    * Ingesting is abstracted over the following variants:
-   *  - The source of the input tiles, which are represented as an RDD of (T, Tile) tuples, where T: IngestKey
+   *  - The source of the input tiles, which are represented as an RDD of (T, Tile) tuples, where T: Component[?, ProjectedExtent]
    *  - The LayoutScheme which will be used to determine how to retile the input tiles.
    *
    * @param sourceTiles   RDD of tiles that have Extent and CRS
@@ -48,35 +53,40 @@ object Ingest {
    * @param layoutScheme  LayoutScheme to be used by output layer
    * @param pyramid       Pyramid up to level 1, sink function will be called for each level
    * @param cacheLevel    Storage level to use for RDD caching
-   * @param tiler         Tiler that can understand the input and out keys (implicit)
    * @param sink          function that utilize the result of the ingest, assumed to force materialization of the RDD
    * @tparam T            type of input tile key
    * @tparam K            type of output tile key, must have SpatialComponent
    * @return
    */
-  def apply[T: IngestKey: ClassTag, K: SpatialComponent: ClassTag](
+  def apply[T: ClassTag: ? => TilerKeyMethods[T, K]: Component[?, ProjectedExtent], K: SpatialComponent: Boundable: ClassTag](
       sourceTiles: RDD[(T, Tile)],
       destCRS: CRS,
       layoutScheme: LayoutScheme,
       pyramid: Boolean = false,
       cacheLevel: StorageLevel = StorageLevel.NONE,
-      resampleMethod: ResampleMethod = NearestNeighbor
+      resampleMethod: ResampleMethod = NearestNeighbor,
+      partitioner: Option[Partitioner] = None,
+      bufferSize: Option[Int] = None
     )
-    (sink: (RasterRDD[K], Int) => Unit)
-    (implicit tiler: Tiler[T, K, Tile]): Unit =
+    (sink: (TileLayerRDD[K], Int) => Unit): Unit =
   {
-    sourceTiles.persist()
-    val reprojectedTiles = sourceTiles.reproject(destCRS, ReprojectOptions(resampleMethod)).cache()
-    val (zoom, rasterMetaData) =
-      RasterMetaData.fromRdd(reprojectedTiles, destCRS, layoutScheme)(_.projectedExtent.extent)
-    val tiledRdd = tiler(reprojectedTiles, rasterMetaData, resampleMethod).cache()
-    val rasterRdd = new RasterRDD(tiledRdd, rasterMetaData)
+    val (_, tileLayerMetadata) = TileLayerMetadata.fromRdd(sourceTiles, FloatingLayoutScheme(512))
+    val tiledRdd = sourceTiles.tileToLayout(tileLayerMetadata, resampleMethod).cache()
 
-    def buildPyramid(zoom: Int, rdd: RasterRDD[K]): List[(Int, RasterRDD[K])] = {
+    val contextRdd = new ContextRDD(tiledRdd, tileLayerMetadata)
+    val (zoom, tileLayerRdd) =
+      bufferSize match {
+        case Some(bs) => contextRdd.reproject(destCRS, layoutScheme, bs)
+        case None => contextRdd.reproject(destCRS, layoutScheme)
+      }
+
+    tileLayerRdd.persist(cacheLevel)
+
+    def buildPyramid(zoom: Int, rdd: TileLayerRDD[K]): List[(Int, TileLayerRDD[K])] = {
       if (zoom >= 1) {
         rdd.persist(cacheLevel)
         sink(rdd, zoom)
-        val pyramidLevel@(nextZoom, nextRdd) = Pyramid.up(rdd, layoutScheme, zoom)
+        val pyramidLevel @ (nextZoom, nextRdd) = Pyramid.up(rdd, layoutScheme, zoom, partitioner)
         pyramidLevel :: buildPyramid(nextZoom, nextRdd)
       } else {
         sink(rdd, zoom)
@@ -85,9 +95,9 @@ object Ingest {
     }
 
     if (pyramid)
-      buildPyramid(zoom, rasterRdd)
+      buildPyramid(zoom, tileLayerRdd)
         .foreach { case (z, rdd) => rdd.unpersist(true) }
     else
-      sink(rasterRdd, zoom)
+      sink(tileLayerRdd, zoom)
   }
 }

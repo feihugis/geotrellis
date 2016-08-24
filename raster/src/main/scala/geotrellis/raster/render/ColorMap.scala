@@ -20,150 +20,210 @@ import geotrellis.raster._
 import geotrellis.raster.histogram.Histogram
 
 import scala.collection.mutable
+import scala.util.Try
 
-sealed abstract class ColorMapType
-
-case object GreaterThan extends ColorMapType
-case object GreaterThanOrEqualTo extends ColorMapType
-case object LessThan extends ColorMapType
-case object LessThanOrEqualTo extends ColorMapType
-case object Exact extends ColorMapType
-
-case class ColorMapOptions(
-  colorMapType: ColorMapType,
-  /** Rgba value for NODATA */
-  noDataColor: Int = 0x00000000,
-  /** Rgba value for data that doesn't fit the map */
-  noMapColor: Int = 0x00000000,
-  /** Set to true to throw exception on unmappable variables */
-  strict: Boolean = false
-)
-
-object ColorMapOptions {
-  val Default = ColorMapOptions(LessThan)
-
-  def apply(nd: Int): ColorMapOptions =
-    ColorMapOptions(LessThan, nd)
-
-  implicit def colorMapTypeToOptions(colorMapType: ColorMapType): ColorMapOptions =
-    ColorMapOptions(colorMapType)
-}
+/** Root element in hierarchy for specifying the type of boundary when classifying colors*/
+sealed trait ClassBoundaryType
+case object GreaterThan extends ClassBoundaryType
+case object GreaterThanOrEqualTo extends ClassBoundaryType
+case object LessThan extends ClassBoundaryType
+case object LessThanOrEqualTo extends ClassBoundaryType
+case object Exact extends ClassBoundaryType
 
 object ColorMap {
-  def apply(breaksToColors: Map[Int, Int]): IntColorMap =
-    IntColorMap(breaksToColors)
+  case class Options(
+    classBoundaryType: ClassBoundaryType = LessThanOrEqualTo,
+    /** Rgba value for NODATA */
+    noDataColor: Int = 0x00000000,
+    /** Rgba value for data that doesn't fit the map */
+    fallbackColor: Int = 0x00000000,
+    /** Set to true to throw exception on unmappable variables */
+    strict: Boolean = false
+  )
 
-  def apply(breaksToColors: Map[Int, Int],
-            options: ColorMapOptions): IntColorMap =
-    IntColorMap(breaksToColors, options)
+  object Options {
+    def DEFAULT = Options()
 
-  def apply(breaksToColors: Map[Double, Int]): DoubleColorMap =
-    DoubleColorMap(breaksToColors)
+    implicit def classBoundaryTypeToOptions(classBoundaryType: ClassBoundaryType): Options =
+      Options(classBoundaryType)
+  }
 
-  def apply(breaksToColors: Map[Double, Int], options: ColorMapOptions): DoubleColorMap =
-    DoubleColorMap(breaksToColors, options)
+  def apply(breaksToColors: (Int, Int)*): ColorMap =
+    apply(breaksToColors.toMap)
 
-  def apply(colorBreaks: ColorBreaks): ColorMap =
-    apply(colorBreaks, ColorMapOptions.Default)
+  def apply(breaksToColors: Map[Int, Int]): ColorMap =
+    apply(breaksToColors, Options.DEFAULT)
 
-  def apply(colorBreaks: ColorBreaks, options: ColorMapOptions): ColorMap =
-    colorBreaks.toColorMap(options)
+  def apply(breaksToColors: Map[Int, Int], options: Options): ColorMap =
+    new IntColorMap(breaksToColors, options)
 
-  def apply(breaks: Array[Int], color: Array[Int]): IntColorMap =
-    apply(breaks, color, ColorMapOptions.Default)
+  def apply(breaksToColors: (Double, Int)*)(implicit d: DummyImplicit): ColorMap =
+    apply(breaksToColors.toMap)
 
-  def apply(breaks: Array[Int], colors: Array[Int], options: ColorMapOptions): IntColorMap = {
-    val breaksToColors: Map[Int, Int] =
-      breaks.zip(colors)
+  def apply(breaksToColors: Map[Double, Int])(implicit d: DummyImplicit): ColorMap =
+    apply(breaksToColors, Options.DEFAULT)
+
+  def apply(breaksToColors: Map[Double, Int], options: Options)(implicit d: DummyImplicit): ColorMap =
+    new DoubleColorMap(breaksToColors, options)
+
+  def apply(breaks: Array[Int], colorRamp: ColorRamp): ColorMap =
+    apply(breaks, colorRamp, Options.DEFAULT)
+
+  def apply(breaks: Array[Int], colorRamp: ColorRamp, options: Options): ColorMap =
+    apply(breaks.toVector, colorRamp, options)
+
+  def apply(breaks: Vector[Int], colorRamp: ColorRamp): ColorMap =
+    apply(breaks, colorRamp, Options.DEFAULT)
+
+  def apply(breaks: Vector[Int], colorRamp: ColorRamp, options: Options): ColorMap = {
+    val breaksToColors: Map[Int, Int] = (breaks zip colorRamp.stops(breaks.size).colors).toMap
+    apply(breaksToColors, options)
+  }
+
+  def apply(breaks: Array[Double], colorRamp: ColorRamp)(implicit d: DummyImplicit): ColorMap =
+    apply(breaks, colorRamp, Options.DEFAULT)
+
+  def apply(breaks: Array[Double], colorRamp: ColorRamp, options: Options)(implicit d: DummyImplicit): ColorMap =
+    apply(breaks.toVector, colorRamp, options)
+
+  def apply(breaks: Vector[Double], colorRamp: ColorRamp)(implicit d: DummyImplicit): ColorMap =
+    apply(breaks, colorRamp, Options.DEFAULT)
+
+  def apply(breaks: Vector[Double], colorRamp: ColorRamp, options: Options)(implicit d: DummyImplicit): ColorMap = {
+    val breaksToColors: Map[Double, Int] =
+      breaks.zip(colorRamp.stops(breaks.size).colors)
             .toMap
 
     apply(breaksToColors, options)
   }
 
-  def apply(breaks: Array[Double], color: Array[Int]): DoubleColorMap =
-    apply(breaks, color, ColorMapOptions.Default)
+  def fromQuantileBreaks(histogram: Histogram[Int], colorRamp: ColorRamp): ColorMap =
+    fromQuantileBreaks(histogram, colorRamp, Options.DEFAULT)
 
-  def apply(breaks: Array[Double], colors: Array[Int], options: ColorMapOptions): DoubleColorMap = {
-    val breaksToColors: Map[Double, Int] =
-      breaks.zip(colors)
-            .toMap
+  def fromQuantileBreaks(histogram: Histogram[Int], colorRamp: ColorRamp, options: Options): ColorMap =
+    apply(histogram.quantileBreaks(colorRamp.numStops).toVector, colorRamp.colors, options)
 
-    apply(breaksToColors, options)
+  def fromQuantileBreaks(histogram: Histogram[Double], colorRamp: ColorRamp)(implicit d: DummyImplicit): ColorMap =
+    fromQuantileBreaks(histogram, colorRamp, Options.DEFAULT)
+
+  def fromQuantileBreaks(histogram: Histogram[Double], colorRamp: ColorRamp, options: Options)(implicit d: DummyImplicit): ColorMap = {
+    // Since double histograms are approximate,
+    // set the fallback color to the appropriate color to catch
+    // values beyond the limis
+    val cm = apply(histogram.quantileBreaks(colorRamp.numStops).toVector, colorRamp.colors, options)
+    options.classBoundaryType match {
+      case GreaterThan | GreaterThanOrEqualTo =>
+        cm.withFallbackColor(colorRamp.colors(0))
+      case LessThan | LessThanOrEqualTo =>
+        cm.withFallbackColor(colorRamp.colors(colorRamp.colors.length - 1))
+      case Exact =>
+        cm
+    }
+  }
+
+  /** Parse an integer color map from a string of value:color;value:color;... */
+  def fromString(str: String): Option[ColorMap] = {
+    val split = str.split(';').map(_.trim.split(':'))
+    Try {
+      val limits = split.map { pair => pair(0).toInt }
+      val colors = split.map { pair => BigInt(pair(1), 16).toInt }
+      require(limits.size == colors.size)
+      apply(limits, colors)
+    }.toOption
+  }
+
+  /** Parse an integer color map from a string of value:color;value:color;... */
+  def fromStringDouble(str: String): Option[ColorMap] = {
+    val split = str.split(';').map(_.trim.split(':'))
+    Try {
+      val limits = split.map { pair => pair(0).toDouble }
+      val colors = split.map { pair => BigInt(pair(1), 16).toInt }
+      require(limits.size == colors.size)
+      apply(limits, colors)
+    }.toOption
   }
 }
 
-trait ColorMap {
-  def colors: Array[Int]
-  val options: ColorMapOptions
+import ColorMap.Options
 
-  private var _opaque = true
-  private var _grey = true
-  private var _colorsChecked = false
+trait ColorMap extends Serializable {
+  def colors: Vector[Int]
+  val options: Options
 
-  private def checkColors() = {
+  lazy val (opaque, grey) = {
     var opaque = true
     var grey = true
     var i = 0
     while (i < colors.length) {
       val c = colors(i)
-      opaque &&= Color.isOpaque(c)
-      grey &&= Color.isGrey(c)
+      opaque &&= RGBA(c).isOpaque
+      grey &&= RGBA(c).isGrey
       i += 1
     }
-    _colorsChecked = true
+    (opaque, grey)
   }
 
-  def opaque =
-    if(_colorsChecked) { _opaque }
-    else {
-      checkColors()
-      _opaque
+  def render(tile: Tile): Tile = {
+    val result = ArrayTile.empty(IntCellType, tile.cols, tile.rows)
+    if(tile.cellType.isFloatingPoint) {
+      tile.foreachDouble { (col, row, z) =>
+        result.setDouble(col, row, mapDouble(z))
+      }
+    } else {
+      tile.foreach { (col, row, z) =>
+        result.set(col, row, map(z))
+      }
     }
+    result
+  }
 
-  def grey =
-    if(_colorsChecked) { _grey }
-    else {
-      checkColors()
-      _grey
-    }
+  def map(v: Int): Int
+  def mapDouble(v: Double): Int
 
-  def render(r: Tile): Tile
+  def mapColors(f: Int => Int): ColorMap
+  def mapColorsToIndex(): ColorMap
 
-  def cache(h: Histogram): ColorMap
+  def withNoDataColor(color: Int): ColorMap
+  def withFallbackColor(color: Int): ColorMap
+  def withBoundaryType(classBoundaryType: ClassBoundaryType): ColorMap
+
+  /** Retrieve a "breaks string" from [[ColorMap]] data.
+    * The opposite of the [[ColorMap.fromString]] methods.
+    */
+  def breaksString: String
 }
 
-case class IntColorMap(breaksToColors: Map[Int, Int],
-                      options: ColorMapOptions = ColorMapOptions.Default) extends ColorMap {
-  val orderedBreaks: Array[Int] =
-    options.colorMapType match {
+class IntColorMap(breaksToColors: Map[Int, Int], val options: Options = Options.DEFAULT) extends ColorMap {
+  private lazy val orderedBreaks: Vector[Int] =
+    options.classBoundaryType match {
       case LessThan | LessThanOrEqualTo =>
-        breaksToColors.keys.toArray.sorted
+        breaksToColors.keys.toVector.sorted
       case GreaterThan | GreaterThanOrEqualTo =>
-        breaksToColors.keys.toArray.sorted.reverse
+        breaksToColors.keys.toVector.sorted.reverse
       case Exact =>
-        breaksToColors.keys.toArray
+        breaksToColors.keys.toVector
     }
 
-  val orderedColors: Array[Int] = orderedBreaks.map(breaksToColors(_))
+  private lazy val orderedColors: Vector[Int] = orderedBreaks.map(breaksToColors(_))
   lazy val colors = orderedColors
 
-  val zCheck: (Int, Int) => Boolean =
-    options.colorMapType match {
+  private val zCheck: (Int, Int) => Boolean =
+    options.classBoundaryType match {
       case LessThan =>
-        { (z: Int, i: Int) => z > orderedBreaks(i) }
-      case LessThanOrEqualTo =>
         { (z: Int, i: Int) => z >= orderedBreaks(i) }
+      case LessThanOrEqualTo =>
+        { (z: Int, i: Int) => z > orderedBreaks(i) }
       case GreaterThan =>
-        { (z: Int, i: Int) => z < orderedBreaks(i) }
-      case GreaterThanOrEqualTo =>
         { (z: Int, i: Int) => z <= orderedBreaks(i) }
+      case GreaterThanOrEqualTo =>
+        { (z: Int, i: Int) => z < orderedBreaks(i) }
       case Exact =>
         { (z: Int, i: Int) => z != orderedBreaks(i) }
     }
 
-  val len = orderedBreaks.length
+  private val len = orderedBreaks.length
 
-  def apply(z: Int) = {
+  def map(z: Int) = {
     if(isNoData(z)) { options.noDataColor }
     else {
       var i = 0
@@ -172,7 +232,7 @@ case class IntColorMap(breaksToColors: Map[Int, Int],
         if(options.strict) {
           sys.error(s"Value $z did not have an associated color and break")
         } else {
-          options.noMapColor
+          options.fallbackColor
         }
       } else {
         orderedColors(i)
@@ -180,55 +240,115 @@ case class IntColorMap(breaksToColors: Map[Int, Int],
     }
   }
 
-  def render(r: Tile) =
-      r.convert(TypeByte).map { z => apply(z) }
+  def mapDouble(z: Double) =
+    map(d2i(z))
 
-  def cache(h: Histogram): ColorMap = {
+  def mapColors(f: Int => Int): ColorMap =
+    new IntColorMap(breaksToColors.map { case (key, color) => (key, f(color)) }, options)
+
+  def mapColorsToIndex(): ColorMap =
+    new IntColorMap(orderedBreaks.zipWithIndex.toMap, options)
+
+  def withNoDataColor(color: Int): ColorMap =
+    new IntColorMap(breaksToColors, options.copy(noDataColor = color))
+
+  def withFallbackColor(color: Int): ColorMap =
+    new IntColorMap(breaksToColors, options.copy(fallbackColor = color))
+
+  def withBoundaryType(classBoundaryType: ClassBoundaryType): ColorMap =
+    new IntColorMap(breaksToColors, options.copy(classBoundaryType = classBoundaryType))
+
+  def cache(h: Histogram[Int]): ColorMap = {
     val ch = h.mutable
-    h.foreachValue(z => ch.setItem(z, apply(z)))
-    CachedColorMap(orderedColors, options, ch)
+    h.foreachValue(z => ch.setItem(z, map(z)))
+    new IntCachedColorMap(orderedColors, ch, options)
+  }
+
+  def breaksString: String = {
+    breaksToColors
+      .toStream
+      .map({ case (k,v) => s"${k}:${Integer.toHexString(v)}"})
+      .mkString(";")
   }
 }
 
-case class CachedColorMap(colors: Array[Int], options: ColorMapOptions, h: Histogram)
-  extends ColorMap with Function1[Int, Int] {
-  final val noDataColor = options.noDataColor
-  def render(r: Tile) =
-    r.map(this)
-  final def apply(z: Int) = { if(isNoData(z)) noDataColor else h.getItemCount(z) }
-  def cache(h: Histogram) = this
+/** Caches a color ramp based on a histogram of values. This is an optimization, since
+  * often times we create a histogram while classifying, and can reuse that computed
+  * information in the color mapping.
+  */
+class IntCachedColorMap(val colors: Vector[Int], h: Histogram[Int], val options: Options)
+    extends ColorMap {
+  val noDataColor = options.noDataColor
+
+  def map(z: Int): Int = { if(isNoData(z)) noDataColor else h.itemCount(z).toInt }
+
+  def mapDouble(z: Double): Int = map(d2i(z))
+
+  def mapColors(f: Int => Int): ColorMap = {
+    val ch = h.mutable
+    h.foreachValue(z => ch.setItem(z, f(h.itemCount(z).toInt)))
+    new IntCachedColorMap(colors, ch, options)
+  }
+
+  def mapColorsToIndex(): ColorMap = {
+    val colorIndexMap = colors.zipWithIndex.map { case (c, i) => (i, c) }.toMap
+    val ch = h.mutable
+    h.foreachValue(z => ch.setItem(z, colorIndexMap(h.itemCount(z).toInt)))
+    new IntCachedColorMap((0 to colors.length).toVector, ch, options)
+  }
+
+  def withNoDataColor(color: Int): ColorMap =
+    new IntCachedColorMap(colors, h, options.copy(noDataColor = color))
+
+  def withFallbackColor(color: Int): ColorMap =
+    new IntCachedColorMap(colors, h, options.copy(fallbackColor = color))
+
+  def withBoundaryType(classBoundaryType: ClassBoundaryType): ColorMap =
+    new IntCachedColorMap(colors, h, options.copy(classBoundaryType = classBoundaryType))
+
+  def breaksString: String = {
+    h.quantileBreaks(colors.length)
+      .toVector
+      .zip(colors)
+      .map({ case (k,v) => s"${k}:${Integer.toHexString(v)}"})
+      .mkString(";")
+  }
 }
 
-case class DoubleColorMap(breaksToColors: Map[Double, Int],
-                          options: ColorMapOptions = ColorMapOptions.Default) extends ColorMap {
-  lazy val colors = breaksToColors.values.toArray
-  val orderedBreaks: Array[Double] =
-    options.colorMapType match {
+class DoubleColorMap(breaksToColors: Map[Double, Int], val options: Options = Options.DEFAULT) extends ColorMap {
+
+  private val orderedBreaks: Vector[Double] =
+    options.classBoundaryType match {
       case LessThan | LessThanOrEqualTo =>
-        breaksToColors.keys.toArray.sorted
+        breaksToColors.keys.toVector.sorted
       case GreaterThan | GreaterThanOrEqualTo =>
-        breaksToColors.keys.toArray.sorted.reverse
+        breaksToColors.keys.toVector.sorted.reverse
       case Exact =>
-        breaksToColors.keys.toArray
+        breaksToColors.keys.toVector
     }
 
-  val zCheck: (Double, Int) => Boolean =
-    options.colorMapType match {
+  private val orderedColors: Vector[Int] = orderedBreaks.map(breaksToColors(_))
+  lazy val colors = orderedColors
+
+  private val zCheck: (Double, Int) => Boolean =
+    options.classBoundaryType match {
       case LessThan =>
-        { (z: Double, i: Int) => z > orderedBreaks(i) }
-      case LessThanOrEqualTo =>
         { (z: Double, i: Int) => z >= orderedBreaks(i) }
+      case LessThanOrEqualTo =>
+        { (z: Double, i: Int) => z > orderedBreaks(i) }
       case GreaterThan =>
-        { (z: Double, i: Int) => z < orderedBreaks(i) }
-      case GreaterThanOrEqualTo =>
         { (z: Double, i: Int) => z <= orderedBreaks(i) }
+      case GreaterThanOrEqualTo =>
+        { (z: Double, i: Int) => z < orderedBreaks(i) }
       case Exact =>
         { (z: Double, i: Int) => z != orderedBreaks(i) }
     }
 
-  val len = orderedBreaks.length
+  private val len = orderedBreaks.length
 
-  def apply(z: Double) = {
+  def map(z: Int) = { mapDouble(i2d(z)) }
+
+  def mapDouble(z: Double) = {
     if(isNoData(z)) { options.noDataColor }
     else {
       var i = 0
@@ -238,7 +358,7 @@ case class DoubleColorMap(breaksToColors: Map[Double, Int],
         if(options.strict) {
           sys.error(s"Value $z did not have an associated color and break")
         } else {
-          options.noMapColor
+          options.fallbackColor
         }
       } else {
         breaksToColors(orderedBreaks(i))
@@ -246,22 +366,25 @@ case class DoubleColorMap(breaksToColors: Map[Double, Int],
     }
   }
 
-  def render(r: Tile) =
-      r.mapDouble { z => apply(z) }
+  def mapColors(f: Int => Int): ColorMap =
+    new DoubleColorMap(breaksToColors.map { case (key, color) => (key, f(color)) }, options)
 
-  def cache(h: Histogram): ColorMap = {
-    val ch = h.mutable
+  def mapColorsToIndex(): ColorMap =
+    new DoubleColorMap(orderedBreaks.zipWithIndex.toMap, options)
 
-    h.foreachValue(z => ch.setItem(z, apply(z)))
-    val cs = colors
-    val opts = options
+  def withNoDataColor(color: Int): ColorMap =
+    new DoubleColorMap(breaksToColors, options.copy(noDataColor = color))
 
-    new ColorMap {
-      lazy val colors = cs
-      val options = opts
-      def render(r: Tile) =
-        r.map { z => if(z == NODATA) options.noDataColor else ch.getItemCount(z) }
-      def cache(h: Histogram) = this
-    }
+  def withFallbackColor(color: Int): ColorMap =
+    new DoubleColorMap(breaksToColors, options.copy(fallbackColor = color))
+
+  def withBoundaryType(classBoundaryType: ClassBoundaryType): ColorMap =
+    new DoubleColorMap(breaksToColors, options.copy(classBoundaryType = classBoundaryType))
+
+  def breaksString: String = {
+    breaksToColors
+      .toStream
+      .map({ case (k,v) => s"${k}:${Integer.toHexString(v)}"})
+      .mkString(";")
   }
 }

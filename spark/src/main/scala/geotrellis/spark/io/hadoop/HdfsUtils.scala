@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 DigitalGlobe.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,18 +16,14 @@
 
 package geotrellis.spark.io.hadoop
 
+import java.io._
 import geotrellis.spark.io.hadoop.formats._
-
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.FileSystem
-import org.apache.hadoop.fs.LocalFileSystem
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs._
 import org.apache.hadoop.mapreduce.Job
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat
 import org.apache.hadoop.io._
-
-import java.io._
 import java.util.Scanner
 
 import org.apache.spark.Logging
@@ -39,6 +35,17 @@ import scala.reflect._
 abstract class LineScanner extends Iterator[String] with java.io.Closeable
 
 object HdfsUtils extends Logging {
+
+  def renamePath(from: Path, to: Path, conf: Configuration): Unit = {
+    val fs = from.getFileSystem(conf)
+    fs.rename(from, to)
+  }
+
+  def copyPath(from: Path, to: Path, conf: Configuration): Unit = {
+    val fsFrom = from.getFileSystem(conf)
+    val fsTo = to.getFileSystem(conf)
+    FileUtil.copy(fsFrom, from, fsTo, to, false, conf)
+  }
 
   def ensurePathExists(path: Path, conf: Configuration): Unit = {
     val fs = path.getFileSystem(conf)
@@ -58,17 +65,17 @@ object HdfsUtils extends Logging {
     FileInputFormat.setInputPaths(job, filesAsCsv)
     job.getConfiguration()
   }
-  
+
   /* get the default block size for that path */
   def defaultBlockSize(path: Path, conf: Configuration): Long =
     path.getFileSystem(conf).getDefaultBlockSize(path)
 
-  /* 
+  /*
    * Recursively descend into a directory and and get list of file paths
    * The input path can have glob patterns
    *    e.g. /geotrellis/images/ne*.tif
-   * to only return those files that match "ne*.tif" 
-   */ 
+   * to only return those files that match "ne*.tif"
+   */
   def listFiles(path: Path, conf: Configuration): List[Path] = {
     val fs = path.getFileSystem(conf)
     val files = new ListBuffer[Path]
@@ -98,10 +105,10 @@ object HdfsUtils extends Logging {
   /* get hadoop's temporary directory */
   def getTempDir(conf: Configuration): String = conf.get("hadoop.tmp.dir", "/tmp")
 
-  /* 
-   * Create a temporary directory called "dir" under hadoop's temporary directory.  
+  /*
+   * Create a temporary directory called "dir" under hadoop's temporary directory.
    * If "dir" is empty, it generates a random 40-character string as the directory name
-   */ 
+   */
   def createTempDir(conf: Configuration, dir: String = ""): Path = {
     val dirPath = if (dir == "") new Path(getTempDir(conf), createRandomString(40)) else new Path(dir)
     dirPath.getFileSystem(conf).mkdirs(dirPath)
@@ -170,49 +177,6 @@ object HdfsUtils extends Logging {
     }
 
     bytes
-  }
-
-  def readArray[T: HadoopWritable: ClassTag](path: Path, conf: Configuration): Array[T] = {
-    val writable = implicitly[HadoopWritable[T]]
-    import writable.implicits._
-    logDebug(s"Reading array form $path")
-    val fs = path.getFileSystem(conf)
-    val in = new ObjectInputStream(fs.open(path))
-    try {
-      val size = in.readInt
-      val arr = Array.ofDim[T](size)
-      var i = 0
-      while(i < size) {
-        val x = writable.newWritable
-        x.readFields(in)
-        arr(i) = x.toValue
-        i += 1
-      }
-      arr
-    } finally {
-      in.close()
-    }
-  }
-
-  def writeArray[T: HadoopWritable](path: Path, conf: Configuration, arr: Array[T]): Unit = {
-    val writable = implicitly[HadoopWritable[T]]
-    import writable.implicits._
-    logDebug(s"Writing array of size ${arr.size} to $path")
-    val fs = path.getFileSystem(conf)
-
-    val out = new ObjectOutputStream(fs.create(path))
-    try {
-      val size = arr.size
-
-      out.writeInt(size)
-      var i = 0
-      while(i < size) {
-        arr(i).toWritable.write(out)
-        i += 1
-      }
-    } finally {
-      out.close
-    }
   }
 
   def getLineScanner(path: Path, conf: Configuration): Option[LineScanner] = {

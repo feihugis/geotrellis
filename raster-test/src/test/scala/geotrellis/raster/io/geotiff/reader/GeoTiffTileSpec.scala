@@ -3,13 +3,13 @@ package geotrellis.raster.io.geotiff.reader
 import geotrellis.raster._
 import geotrellis.raster.io.geotiff._
 import geotrellis.raster.io.geotiff.compression._
-import geotrellis.testkit._
+import geotrellis.raster.testkit._
 
 import spire.syntax.cfor._
 import org.scalatest._
 
 class GeoTiffTileSpec extends FunSpec 
-    with TestEngine
+    with RasterMatchers
     with TileBuilders
     with GeoTiffTestUtils {
 
@@ -34,8 +34,8 @@ class GeoTiffTileSpec extends FunSpec
 
     it("should work against econic.tif Striped NoCompression") {
       val options = GeoTiffOptions(Striped, NoCompression)
-      val expected = SingleBandGeoTiff(s"$baseDataPath/econic.tif").tile
-      val actual = expected.toGeoTiffTile(options).tile
+      val expected = SinglebandGeoTiff(s"$baseDataPath/econic.tif").tile
+      val actual = expected.toGeoTiffTile(options).toArrayTile
 
       assertEqual(expected, actual)
     }
@@ -43,7 +43,7 @@ class GeoTiffTileSpec extends FunSpec
     it("should work against econic.tif Striped with Deflate compression") {
       val options = GeoTiffOptions(Striped, DeflateCompression)
 
-      val expected = SingleBandGeoTiff(s"$baseDataPath/econic.tif").tile
+      val expected = SinglebandGeoTiff(s"$baseDataPath/econic.tif").tile
       val actual = expected.toGeoTiffTile(options)
 
       assertEqual(actual, expected)
@@ -52,7 +52,7 @@ class GeoTiffTileSpec extends FunSpec
     it("should work against econic.tif Tiled with no compression") {
       val options = GeoTiffOptions(Tiled, NoCompression)
 
-      val expected = SingleBandGeoTiff(s"$baseDataPath/econic.tif").tile
+      val expected = SinglebandGeoTiff(s"$baseDataPath/econic.tif").tile
       val actual = expected.toGeoTiffTile(options)
 
       assertEqual(actual, expected)
@@ -61,7 +61,7 @@ class GeoTiffTileSpec extends FunSpec
     it("should work against econic.tif Tiled with Deflate compression") {
       val options = GeoTiffOptions(Tiled, Deflate)
 
-      val expected = SingleBandGeoTiff(s"$baseDataPath/econic.tif").tile
+      val expected = SinglebandGeoTiff(s"$baseDataPath/econic.tif").tile
       val actual = expected.toGeoTiffTile(options)
 
       assertEqual(actual, expected)
@@ -69,7 +69,7 @@ class GeoTiffTileSpec extends FunSpec
   }
 
   describe("GeoTiffTile") {
-    it("should convert from TypeInt to TypeDouble") {
+    it("should convert from IntConstantNoDataCellType to DoubleConstantNoDataCellType") {
       val arrInt = 
         Array(1, 2, 1, 1, 2,
               1, 2, 2, 1, 2,
@@ -80,11 +80,10 @@ class GeoTiffTileSpec extends FunSpec
 
       val t = createTile(arrInt, 5, 3)
 
-      val actual = t.toGeoTiffTile().convert(TypeDouble)
+      val actual = t.toGeoTiffTile().convert(DoubleConstantNoDataCellType)
       val expected = createTile(arrDouble, 5, 3)
 
       assertEqual(actual, expected)
     }
-
   }
 }

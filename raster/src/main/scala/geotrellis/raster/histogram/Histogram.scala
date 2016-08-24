@@ -16,186 +16,120 @@
 
 package geotrellis.raster.histogram
 
-import geotrellis.raster.op.stats.Statistics
-import geotrellis.raster.NODATA
-import math.{abs, round, sqrt}
+import geotrellis.raster.summary.Statistics
+
 
 /**
   * Data object representing a histogram of values.
   */
-abstract trait Histogram extends Serializable {
-  /**
-   * Return the number of occurances for 'item'.
-   */
-  def getItemCount(item: Int): Int
+abstract trait Histogram[@specialized (Int, Double) T <: AnyVal] extends Serializable {
 
   /**
-   * Return the total number of occurances for all items.
+   * Return the number of occurrences for 'item'.
    */
-  def getTotalCount(): Int
+  def itemCount(item: T): Long
+
+  /**
+   * Return the total number of occurrences for all items.
+   */
+  def totalCount(): Long
 
   /**
    * Return the smallest item seen.
    */
-  def getMinValue(): Int
+  def minValue(): Option[T]
 
   /**
    * Return the largest item seen.
    */
-  def getMaxValue(): Int
+  def maxValue(): Option[T]
 
   /**
    * Return the smallest and largest items seen as a tuple.
    */
-  def getMinMaxValues(): (Int, Int) = (getMinValue, getMaxValue)
+  def minMaxValues(): Option[(T, T)] = {
+    val min = minValue
+    val max = maxValue
+    if (min.nonEmpty && max.nonEmpty)
+      Some(min.get, max.get)
+    else
+      None
+  }
 
   /**
    * Return a mutable copy of this histogram.
    */
-  def mutable(): MutableHistogram
+  def mutable(): MutableHistogram[T]
 
-  def getValues(): Array[Int]
+  /**
+    * Return a sorted array of values seen by this histogram.
+    */
+  def values(): Array[T]
 
-  def rawValues(): Array[Int]
+  /**
+    * Return an array containing the values seen by this histogram.
+    */
+  def rawValues(): Array[T]
 
-  def foreach(f: (Int, Int) => Unit) {
-    getValues.foreach(z => f(z, getItemCount(z)))
-  }
+  /**
+    * Execute the given function on the value and count of each bucket
+    * in the histogram.
+    */
+  def foreach(f: (T, Long) => Unit): Unit
 
-  def foreachValue(f: Int => Unit): Unit
+  /**
+    * Execute the given function on the value of each bucket in the
+    * histogram.
+    *
+    * @param  f  A unit function of one parameter
+    */
+  def foreachValue(f: T => Unit): Unit
 
-  def getQuantileBreaks(num: Int): Array[Int]
+  /**
+    * Compute the quantile breaks of the histogram, where the latter
+    * are evenly spaced in 'num' increments starting at zero percent.
+    */
+  def quantileBreaks(num: Int): Array[T]
 
-  def getMode(): Int = {
-    if(getTotalCount == 0) { return NODATA }
-    val values = getValues()
-    var mode = values(0)
-    var count = getItemCount(mode)
-    var i = 1
-    val len = values.length
-    while (i < len) {
-      val z = values(i)
-      val c = getItemCount(z)
-      if (c > count) {
-        count = c
-        mode = z
-      }
-      i += 1
-    }
-    mode
-  }
+  /**
+    * Compute the mode of the distribution represented by the
+    * histogram.
+    */
+  def mode(): Option[T]
 
-  def getMedian() = if (getTotalCount == 0) {
-    NODATA
-  } else {
-    val values = getValues
-    val middle = getTotalCount() / 2
-    var total = 0
-    var i = 0
-    while (total <= middle) {
-      total += getItemCount(values(i))
-      i += 1
-    }
-    values(i-1)
-  }
+  /**
+    * Compute the median of the distribution represented by the
+    * histogram.
+    */
+  def median(): Option[T]
 
-  def getMean(): Double = {
-    if(getTotalCount == 0) { return NODATA }
+  /**
+    * Compute the mean of the distribution represented by the
+    * histogram.
+    */
+  def mean(): Option[Double]
 
-    val values = rawValues()
-    var mean = 0.0
-    var total = 0.0
-    var i = 0
-    val len = values.length
+  /**
+    * Return a statistics object for the distribution represented by
+    * the histogram.  Contains among other things: mean, mode, median,
+    * and so-forth.
+    */
+  def statistics(): Option[Statistics[T]]
 
-    while (i < len) {
-      val value = values(i)
-      val count = getItemCount(value)
-      val delta = value - mean
-      total += count
-      mean += (count * delta) / total
+  /**
+    * The number of buckets utilized by this [[Histogram]].
+    */
+  def bucketCount(): Int
 
-      i += 1
-    }
-    mean
-  }
+  /**
+    * Return the maximum number of buckets of this histogram.
+    */
+  def maxBucketCount(): Int
 
-  def generateStatistics() = {
-    val values = getValues()
-    if (values.length == 0) {
-      Statistics.EMPTY
-    } else {
-
-      var mode = 0
-      var modeCount = 0
-
-      var mean = 0.0
-      var total = 0
-
-      var median = 0
-      var needMedian = true
-      val limit = getTotalCount() / 2
-
-      var i = 0
-      val len = values.length
-
-      while (i < len) {
-        val value = values(i)
-        val count = getItemCount(value)
-        if (count != 0) {
-          // update the mode
-          if (count > modeCount) {
-            mode = value
-            modeCount = count
-          }
-
-          // update the mean
-          val delta = value - mean
-          total += count
-          mean += (count * delta) / total
-
-          // update median if needed
-          if (needMedian && total > limit) {
-            median = values(i)
-            needMedian = false
-          }
-        }
-        i += 1
-      }
-
-      // find the min value
-      val zmin = values(0)
-
-      // find the max value
-      val zmax = values(len - 1)
-
-      // find stddev
-      i = 0
-      total = 0
-      var mean2 = 0.0
-      while (i < len) {
-        val value = values(i)
-        val count = getItemCount(value)
-
-        if (count > 0) {
-          val x = value - mean
-          val y = x * x
-
-          val delta = y - mean2
-          total += count
-          mean2 += (count * delta) / total
-        }
-
-        i += 1
-      }
-      val stddev = sqrt(mean2)
-
-      Statistics(mean, median, mode, stddev, zmin, zmax)
-    }
-  }
-
-  def toJSON = {
-    val counts = getValues.map(v => s"[$v,${getItemCount(v)}]").mkString(",")
-    s"[$counts]"
-  }
+  /**
+    * Return the sum of this histogram and the given one (the sum is
+    * the histogram that would result from seeing all of the values
+    * seen by the two antecedent histograms).
+    */
+  def merge(histogram: Histogram[T]): Histogram[T]
 }

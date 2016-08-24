@@ -18,15 +18,15 @@ package geotrellis.raster.render
 
 import geotrellis.raster._
 import geotrellis.vector.Extent
-import geotrellis.raster.op.stats._
+import geotrellis.raster.summary._
 
 import org.scalatest._
 
-import geotrellis.testkit._
+import geotrellis.raster.testkit._
 
-class GetColorBreaksSpec extends FunSpec
-                            with TestEngine
-                            with Matchers {
+class GetColorsAndBreaksSpec extends FunSpec
+    with RasterMatchers
+    with Matchers {
   describe("GetColorBreaks") {
     it("gets color breaks for test raster.") {
       val testTile = {
@@ -42,18 +42,28 @@ class GetColorBreaksSpec extends FunSpec
 
       val h = testTile.histogram
       val (g, y, o, r) = (0x00ff00ff, 0xffff00ff, 0xff7f00ff, 0xff0000ff)
-      val colors = Array(g, y, o, r)
-      val colorBreaks = ColorBreaks(h, colors)
-      colorBreaks.limits should be (Array(12, 15, 66, 95))
-      colorBreaks.colors should be (Array(g, y, o, r))
+      val colors: Array[Int] = Array(g, y, o, r)
+      val colorMap = ColorMap.fromQuantileBreaks(h, colors)
+      colorMap.colors.toArray should be (Array(g, y, o, r))
     }
 
-    it("can come from a string.") {
-      val goodString = "12:00ff00ff;15:ffff00ff"
-      ColorBreaks.fromStringInt(goodString) should not be empty
+    it("gets color breaks for test double raster.") {
+      val testTile = {
+        val nd = doubleNODATA
+        ArrayTile(
+          Array(
+            12.0, 12.0, 13.0, 14.0, 15.0,
+            44.0, 91.0, nd,   11.0, 95.0,
+            12.0, 13.0, 56.0, 66.0, 66.0,
+            44.0, 91.0, nd,   11.0, 95.0),
+          5, 4)
+      }
 
-      val badString = "12:0bad_data0ff00ff;15:ffff00ff"
-      ColorBreaks.fromStringInt(badString) shouldBe empty
+      val h = testTile.histogramDouble
+      val (g, y, o, r) = (0x00ff00ff, 0xffff00ff, 0xff7f00ff, 0xff0000ff)
+      val colors: Array[Int] = Array(g, y, o, r)
+      val colorMap = ColorMap.fromQuantileBreaks(h, colors)
+      colorMap.colors.toArray should be (Array(g, y, o, r))
     }
   }
 }

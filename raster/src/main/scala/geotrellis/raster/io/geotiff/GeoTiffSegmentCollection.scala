@@ -6,11 +6,11 @@ import geotrellis.raster.io.geotiff.compression._
 trait GeoTiffSegmentCollection {
   type T >: Null <: GeoTiffSegment
 
+  /** represents all of the segments in the geotiff */
   val compressedBytes: Array[Array[Byte]]
   val decompressor: Decompressor
 
   val bandType: BandType
-  val cellType: CellType
 
   def getDecompressedBytes(i: Int): Array[Byte] =
     decompressor.decompress(compressedBytes(i), i)
@@ -24,7 +24,7 @@ trait GeoTiffSegmentCollection {
   def getSegment(i: Int): T = {
     if(i != _lastSegmentIndex) {
       _lastSegment = createSegment(i)
-      _lastSegmentIndex = i 
+      _lastSegmentIndex = i
     }
     _lastSegment
   }

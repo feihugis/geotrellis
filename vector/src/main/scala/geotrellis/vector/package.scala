@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 Azavea.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,12 +16,16 @@
 
 package geotrellis
 
+import geotrellis.util.MethodExtensions
+
 import com.vividsolutions.jts.{geom => jts}
 
 import scala.collection.mutable
 import scala.collection.JavaConversions._
 
-package object vector extends SeqMethods {
+package object vector extends SeqMethods
+    with reproject.Implicits 
+    with voronoi.Implicits {
 
   type PointFeature[D] = Feature[Point, D]
   type LineFeature[D] = Feature[Line, D]
@@ -31,6 +35,41 @@ package object vector extends SeqMethods {
   type MultiPolygonFeature[D] = Feature[MultiPolygon, D]
   type GeometryCollectionFeature[D] = Feature[GeometryCollection, D]
 
+  // MethodExtensions
+
+  implicit class withPointMethod(val self: Point) extends MethodExtensions[Point]
+      with affine.PointTransformationMethods
+
+  implicit class LineTransformations(val self: Line) extends MethodExtensions[Line]
+      with affine.LineTransformationMethods
+      with dissolve.DissolveMethods[Line]
+
+  implicit class PolygonTransformations(val self: Polygon) extends MethodExtensions[Polygon]
+      with affine.PolygonTransformationMethods
+      with dissolve.DissolveMethods[Polygon]
+
+  implicit class MultiPointTransformations(val self: MultiPoint) extends MethodExtensions[MultiPoint]
+      with affine.MultiPointTransformationMethods
+
+  implicit class MultiLineTransformations(val self: MultiLine) extends MethodExtensions[MultiLine]
+      with affine.MultiLineTransformationMethods
+      with dissolve.DissolveMethods[MultiLine]
+
+  implicit class MultiPolygonTransformations(val self: MultiPolygon) extends MethodExtensions[MultiPolygon]
+      with affine.MultiPolygonTransformationMethods
+      with dissolve.DissolveMethods[MultiPolygon]
+
+  implicit class GeometryCollectionTransformations(val self: GeometryCollection) extends MethodExtensions[GeometryCollection]
+      with affine.GeometryCollectionTransformationMethods
+
+  /** The algorithms herein are all implemented in JTS, but the wrapper methods
+    * here make it straightforward to call them with geotrellis.vector classes.
+    */
+  implicit class withAnyGeometryMethods[G <: Geometry](val self: G) extends MethodExtensions[G]
+      with convexhull.ConvexHullMethods[G]
+      with densify.DensifyMethods[G]
+      with prepared.PreparedGeometryMethods[G]
+      with simplify.SimplifyMethods[G]
 
   implicit def tupleOfIntToPoint(t: (Double, Double)): Point =
     Point(t._1,t._2)
@@ -81,21 +120,6 @@ package object vector extends SeqMethods {
     }).toSeq
   }
 
-  implicit def geometryCollectionToSeqGeometry(gc: jts.GeometryCollection): Seq[Geometry] = {
-    val len = gc.getNumGeometries
-    (for (i <- 0 until len) yield {
-      gc.getGeometryN(i) match {
-        case p: jts.Point => Seq[Geometry](Point(p))
-        case mp: jts.MultiPoint => multiPointToSeqPoint(mp)
-        case l: jts.LineString => Seq[Geometry](Line(l))
-        case ml: jts.MultiLineString => multiLineToSeqLine(ml)
-        case p: jts.Polygon => Seq[Geometry](Polygon(p))
-        case mp: jts.MultiPolygon => multiPolygonToSeqPolygon(mp)
-        case gc: jts.GeometryCollection => geometryCollectionToSeqGeometry(gc)
-      }
-    }).toSeq.flatten
-  }
-
   implicit def seqPointToMultiPoint(ps: Seq[Point]): MultiPoint = MultiPoint(ps)
   implicit def arrayPointToMultiPoint(ps: Array[Point]): MultiPoint = MultiPoint(ps)
 
@@ -105,29 +129,6 @@ package object vector extends SeqMethods {
   implicit def seqPolygonToMultiPolygon(ps: Seq[Polygon]): MultiPolygon = MultiPolygon(ps)
   implicit def arrayPolygonToMultiPolygon(ps: Array[Polygon]): MultiPolygon = MultiPolygon(ps)
 
-  implicit def seqGeometryToGeometryCollection(gs: Seq[Geometry]): GeometryCollection = {
-    val points = mutable.ListBuffer[Point]()
-    val lines = mutable.ListBuffer[Line]()
-    val polygons = mutable.ListBuffer[Polygon]()
-    val multiPoints = mutable.ListBuffer[MultiPoint]()
-    val multiLines = mutable.ListBuffer[MultiLine]()
-    val multiPolygons = mutable.ListBuffer[MultiPolygon]()
-    val geometryCollections = mutable.ListBuffer[GeometryCollection]()
-
-    for(g <- gs) {
-      g match {
-        case p: Point => points += p
-        case l: Line => lines += l
-        case p: Polygon => polygons += p
-        case mp: MultiPoint => multiPoints += mp
-        case ml: MultiLine => multiLines += ml
-        case mp: MultiPolygon => multiPolygons += mp
-        case gc: GeometryCollection => geometryCollections += gc
-        case _ => sys.error(s"Unknown Geometry type: $g")
-      }
-    }
-    GeometryCollection(points, lines, polygons,
-                       multiPoints, multiLines, multiPolygons,
-                       geometryCollections)
-  }
+  implicit def seqGeometryToGeometryCollection(gs: Seq[Geometry]): GeometryCollection =
+    GeometryCollection(gs)
 }

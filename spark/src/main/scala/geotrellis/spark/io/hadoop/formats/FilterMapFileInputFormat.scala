@@ -14,86 +14,108 @@ import scala.reflect._
 
 object FilterMapFileInputFormat {
   // Define some key names for Hadoop configuration
-  val SPLITS_FILE_PATH = "splits_file_path"
   val FILTER_INFO_KEY = "geotrellis.spark.io.hadoop.filterinfo"
 
-  type FilterDefinition[K] = (Seq[KeyBounds[K]], Array[(Long, Long)])
-}
+  type FilterDefinition = Array[(Long, Long)]
 
-abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComparable[KW] with IndexedKeyWritable[K] : ClassTag, V >: Null <: Writable : ClassTag]() extends FileInputFormat[KW, V] {
-  var _filterDefinition: Option[FilterMapFileInputFormat.FilterDefinition[K]] = None
-
-  def createKey(): KW =
-    classTag[KW].runtimeClass.newInstance().asInstanceOf[KW]
-
-  def createKey(index: Long): KW = {
-    val kw = classTag[KW].runtimeClass.newInstance().asInstanceOf[KW]
-    kw.setIndex(index)
-    kw
+  def layerRanges(layerPath: Path, conf: Configuration): Vector[(Path, Long, Long)] = {
+    val file = layerPath
+      .getFileSystem(conf)
+      .globStatus(new Path(layerPath, "*"))
+      .filter(_.isDirectory)
+      .map(_.getPath)
+    mapFileRanges(file, conf)
   }
 
-  def createValue(): V =
-    classTag[V].runtimeClass.newInstance().asInstanceOf[V]
+  def mapFileRanges(mapFiles: Seq[Path], conf: Configuration): Vector[(Path, Long, Long)] = {
+    // finding the max index for each file would be very expensive.
+    // it may not be present in the index file and will require:
+    //   - reading the index file
+    //   - opening the map file
+    //   - seeking to data file to max stored index
+    //   - reading data file to the final records
+    // this is not the type of thing we can afford to do on the driver.
+    // instead we assume that each map file runs from its min index to min index of next file
 
-  def getFilterDefinition(conf: Configuration): FilterMapFileInputFormat.FilterDefinition[K] =
+    val fileNameRx = ".*part-r-([0-9]+)-([0-9]+)$".r
+    def readStartingIndex(path: Path): Long = {
+      path.toString match {
+        case fileNameRx(part, firstIndex) =>
+          firstIndex.toLong
+        case _ =>
+          val indexPath = new Path(path, "index")
+          val in = new SequenceFile.Reader(conf, SequenceFile.Reader.file(indexPath))
+          val minKey = new LongWritable
+          try {
+            in.next(minKey)
+          } finally { in.close() }
+          minKey.get
+      }
+    }
+
+    mapFiles
+      .map { file => readStartingIndex(file) -> file }
+      .sortBy(_._1)
+      .foldRight(Vector.empty[(Path, Long, Long)]) {
+        case ((minIndex, fs), vec @ Vector()) =>
+          (fs, minIndex, Long.MaxValue) +: vec
+        case ((minIndex, fs), vec) =>
+          (fs, minIndex, vec.head._2 - 1) +: vec
+      }
+  }
+}
+
+class FilterMapFileInputFormat() extends FileInputFormat[LongWritable, BytesWritable] {
+  var _filterDefinition: Option[FilterMapFileInputFormat.FilterDefinition] = None
+
+  def createKey() = new LongWritable()
+
+  def createKey(index: Long) = new LongWritable(index)
+
+  def createValue() = new BytesWritable()
+
+  def getFilterDefinition(conf: Configuration): FilterMapFileInputFormat.FilterDefinition =
     _filterDefinition match {
       case Some(fd) => fd
       case None =>
-        val r = conf.getSerialized[FilterMapFileInputFormat.FilterDefinition[K]](FilterMapFileInputFormat.FILTER_INFO_KEY)
-        _filterDefinition = Some(r)
-        val compressedRanges = MergeQueue(r._2).sortBy(_._1).toArray
-        r._1 -> compressedRanges // Index ranges MUST be sorted, the reader will NOT do it.
+        val r = conf.getSerialized[FilterMapFileInputFormat.FilterDefinition](FilterMapFileInputFormat.FILTER_INFO_KEY)
+        // Index ranges MUST be sorted, the reader will NOT do it.
+        val compressedRanges = MergeQueue(r).sortBy(_._1).toArray
+        _filterDefinition = Some(compressedRanges)
+        compressedRanges
     }
 
+  /**
+    * Produce list of files that overlap our query region.
+    * This function will be called on the driver.
+    */
   override
   def listStatus(context: JobContext): java.util.List[FileStatus] = {
     val conf = context.getConfiguration
     val filterDefinition = getFilterDefinition(conf)
 
-    // Read the index, figure out if this file has any of the desired values.
-    def fileStatusFilter(fileStatus: FileStatus): Boolean = {
-      val indexPath = new Path(fileStatus.getPath.getParent, "index")
-      val in = new SequenceFile.Reader(conf, SequenceFile.Reader.file(indexPath))
 
-      val minKey = createKey
-      val maxKey = createKey
+    val arr = filterDefinition
+    val it = arr.iterator.buffered
+    val dataFileStatus = super.listStatus(context)
 
-      try {
-        val dummyLongWritable = new LongWritable
+    val possibleMatches =
+      FilterMapFileInputFormat
+        .mapFileRanges(dataFileStatus.map(_.getPath.getParent), conf)
+        .filter { case (file, iMin, iMax) =>
+          // both file ranges and query ranges are sorted, use in-sync traversal
+          while (it.hasNext && it.head._2 < iMin) it.next
+          if (it.hasNext) iMin <= it.head._2 && it.head._1 <= iMax
+          else false
+        }
+        .map(_._1)
+        .toSet
 
-        in.next(minKey, dummyLongWritable)
-        while(in.next(maxKey, dummyLongWritable)) { }
-      } finally {
-        in.close()
-      }
-
-      val iMin = minKey.index
-      val iMax = maxKey.index
-
-      var i = 0
-      val arr = filterDefinition._2
-      val len = arr.length
-
-
-      while(i < len) {
-        val (min, max) = arr(i)
-
-        // max index in this file is smaller than what we're looking for, abort (assert: ranges are sorted in asc)
-        if (iMax < min) return false
-
-        // check if this query ranges overlap at all with min/max index from the sequence file
-        if (iMin <= max && min <= iMax) return true
-        i += 1
-      }
-
-      false
-    }
-
-    super.listStatus(context).filter(fileStatusFilter)
+    dataFileStatus.filter(s => possibleMatches contains s.getPath.getParent)
   }
 
   override
-  def createRecordReader(split: InputSplit, context: TaskAttemptContext): RecordReader[KW, V] =
+  def createRecordReader(split: InputSplit, context: TaskAttemptContext): RecordReader[LongWritable, BytesWritable] =
     new FilterMapFileRecordReader(getFilterDefinition(context.getConfiguration))
 
   override
@@ -106,17 +128,20 @@ abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComp
   def isSplitable(context: JobContext, filename: Path): Boolean =
     false
 
-  class FilterMapFileRecordReader(filterDefinition: FilterMapFileInputFormat.FilterDefinition[K]) extends RecordReader[KW, V] {
+  class FilterMapFileRecordReader(filterDefinition: FilterMapFileInputFormat.FilterDefinition) extends RecordReader[LongWritable, BytesWritable] {
     private var mapFile: MapFile.Reader = null
     private var start: Long = 0L
     private var more: Boolean = true
-    private var key: KW = null
-    private var value: V = null
+    private var key: LongWritable = null
+    private var value: BytesWritable = null
 
-    private val ranges = filterDefinition._2
+    private val ranges = filterDefinition
     private var currMinIndex: Long = 0L
     private var currMaxIndex: Long = 0L
     private var nextRangeIndex: Int = 0
+
+    private var seek = false
+    private var seekKey: LongWritable = null
 
     private def setNextIndexRange(index: Long = 0L): Boolean = {
       if(nextRangeIndex >= ranges.length) {
@@ -129,24 +154,19 @@ abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComp
         if(index > maxIndexInRange) {
           setNextIndexRange(index)
         } else {
+
           currMinIndex = minIndexInRange
           currMaxIndex = maxIndexInRange
 
           // Seek to the beginning of this index range
-          val seekKey =
+          seekKey =
             if(minIndexInRange < index) {
               createKey(index)
             } else {
               createKey(minIndexInRange)
             }
 
-          // Need to use "getClosest" with before = true
-          // because if we use seek, it will seek to the correct key
-          // and then calling next will get the key after the correct key.
-          // Since there's no seek(before = true), we need to call get,
-          // and read in a dummy value
-
-          mapFile.getClosest(seekKey, createValue, true)
+          seek = true
           true
         }
       }
@@ -170,16 +190,34 @@ abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComp
         val nextValue = createValue()
         var break = false
         while(!break) {
-          if(!mapFile.next(nextKey, nextValue)) {
-            break = true
-            more = false
-            key = null
-            value = null
+          if(seek) {
+            seek = false
+            if(key == null || key.get < seekKey.get) {
+              // We are seeking to the beginning of a new range.
+              key = mapFile.getClosest(seekKey, nextValue).asInstanceOf[LongWritable]
+              if(key == null) {
+                break = true
+                more = false
+                value = null
+              } else {
+                value = nextValue
+              }
+            } // else the previously read key is within this new range
           } else {
-            if (nextKey.index > currMaxIndex) {
+            // We are getting the next key in a range currently being explored.
+            if(!mapFile.next(nextKey, nextValue)) {
+              break = true
+              more = false
+              key = null
+              value = null
+            }
+          }
+
+          if(!break) {
+            if (nextKey.get > currMaxIndex) {
               // Must be out of current index range.
               if(nextRangeIndex < ranges.size) {
-                if(!setNextIndexRange(nextKey.index)) {
+                if(!setNextIndexRange(nextKey.get)) {
                   break = true
                   more = false
                   key = null
@@ -192,11 +230,9 @@ abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComp
                 value = null
               }
             } else {
-              if (filterDefinition._1.includeKey(nextKey.key)) {
-                break = true
-                key = nextKey
-                value = nextValue
-              }
+              break = true
+              key = nextKey
+              value = nextValue
             }
           }
         }
@@ -206,10 +242,10 @@ abstract class FilterMapFileInputFormat[K: Boundable, KW >: Null <: WritableComp
     }
 
     override
-    def getCurrentKey(): KW = key
+    def getCurrentKey(): LongWritable = key
 
     override
-    def getCurrentValue(): V = value
+    def getCurrentValue(): BytesWritable = value
 
     /**
       * Return the progress within the input split

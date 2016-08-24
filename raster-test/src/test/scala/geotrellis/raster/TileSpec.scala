@@ -17,8 +17,8 @@
 package geotrellis.raster
 
 import geotrellis.vector.Extent
-import geotrellis.testkit._
-import geotrellis.raster.op.local._
+import geotrellis.raster.testkit._
+import geotrellis.raster.mapalgebra.local._
 import geotrellis.raster.resample._
 
 import org.scalatest._
@@ -28,7 +28,7 @@ import spire.syntax.cfor._
 
 class TileSpec extends FunSpec
                   with Matchers
-                  with TestEngine
+                  with RasterMatchers
                   with TileBuilders {
   val e = Extent(0.0, 0.0, 10.0, 10.0)
   val g = RasterExtent(e, 1.0, 1.0, 10, 10)
@@ -47,11 +47,68 @@ class TileSpec extends FunSpec
     }
 
     it("should create empty tiles") {
-      val r = ArrayTile.empty(TypeInt, 10, 10)
+      val r = ArrayTile.empty(IntConstantNoDataCellType, 10, 10)
       val d = r.toArray
       for(i <- 0 until 10 * 10) {
         d(i) should be (NODATA)
       }
+    }
+
+    it("should create empty tiles with user defined value NoData value for Double") {
+      val cellType = DoubleUserDefinedNoDataCellType(13.3)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+    it("should create empty tiles with user defined value NoData value for Float") {
+      val cellType = FloatUserDefinedNoDataCellType(13f)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+    it("should create empty tiles with user defined value NoData value for Int") {
+      val cellType = IntUserDefinedNoDataCellType(13)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+    it("should create empty tiles with user defined value NoData value for Short") {
+      val cellType = ShortUserDefinedNoDataCellType(13)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+    it("should create empty tiles with user defined value NoData value for UShort") {
+      val cellType = UShortUserDefinedNoDataCellType(13)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+
+    it("should create empty tiles with user defined value NoData value for Byte") {
+      val cellType = ByteUserDefinedNoDataCellType(13)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
+    }
+
+    it("should create empty tiles with user defined value NoData value for UByte") {
+      val cellType = UByteUserDefinedNoDataCellType(13)
+      val tile = ArrayTile.empty(cellType, 5, 5)
+      assert(tile.cellType == cellType)
+      tile.foreachDouble( v => assert(isNoData(v)) )
+      tile.foreach( v => assert(isNoData(v)) )
     }
 
     it("should be comparable to others") {
@@ -85,10 +142,10 @@ class TileSpec extends FunSpec
     it("should convert a byte raster to an int raster") {
       val r = byteRaster
       var result =
-        r.convert(TypeShort)
+        r.convert(ShortConstantNoDataCellType)
          .localAdd(100)
 
-      result.cellType should be (TypeShort)
+      result.cellType should be (ShortConstantNoDataCellType)
       for(col <- 0 until r.cols) {
         for(row <- 0 until r.rows) {
           result.get(col, row) should be (r.get(col, row) + 100)

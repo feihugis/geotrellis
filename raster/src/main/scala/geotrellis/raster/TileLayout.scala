@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 Azavea.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,10 +18,23 @@ package geotrellis.raster
 
 import geotrellis.vector.Extent
 
+
+/**
+  * The companion object associated with the [[TileLayout]] type.
+  */
 object TileLayout {
+
+  /**
+    * Produce a new [[TileLayout]] with the given number of columns
+    * and rows.
+    */
   def singleTile(cols: Int, rows: Int) =
     TileLayout(1, 1, cols, rows)
 
+  /**
+    * Produce a new [[TileLayout]] dimensions determined from the
+    * given [[RasterExtent]].
+    */
   def singleTile(re: RasterExtent) =
     TileLayout(1, 1, re.cols, re.rows)
 }
@@ -46,12 +59,21 @@ case class TileLayout(layoutCols: Int, layoutRows: Int, tileCols: Int, tileRows:
   def totalRows: Long = layoutRows.toLong * tileRows
 
   def layoutDimensions: (Int, Int) = (layoutCols, layoutRows)
+  def tileDimensions: (Int, Int) = (tileCols, tileRows)
 
   def tileSize: Int = tileCols * tileRows
-    
-  def cellSize(extent: Extent): CellSize = 
+
+  /**
+    * Compute the size of the cells, the [[CellSize]], in the given
+    * Extent.
+    */
+  def cellSize(extent: Extent): CellSize =
     CellSize(extent.width / totalCols, extent.height / totalRows)
 
+  /**
+    * Combine the present [[TileLayout]] with another one and return
+    * then result.
+    */
   def combine(other: TileLayout) = {
     val maxLayoutCols = if(layoutCols > other.layoutCols) layoutCols else other.layoutCols
     val maxLayoutRows = if(layoutRows > other.layoutRows) layoutRows else other.layoutRows

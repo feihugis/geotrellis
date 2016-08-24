@@ -1,8 +1,10 @@
 package geotrellis.raster.reproject
 
 import geotrellis.raster._
-import geotrellis.vector.Extent
+import geotrellis.vector._
 import geotrellis.proj4._
+
+import com.vividsolutions.jts.densify.Densifier
 
 import spire.syntax.cfor._
 
@@ -11,112 +13,105 @@ import spire.syntax.cfor._
   * from that code.
   */
 object ReprojectRasterExtent {
+  import Reproject.Options
+
   /*
    * This function is used to suggest the extent and resolution
    * appropriate given the indicated reprojection CRSs.  It walks
    * the edges of the input file (approximately 20 sample points along each
    * edge) transforming into output coordinates in order to get an extents box.
    */
-  def reprojectExtent(re: RasterExtent, transform: Transform): Extent = {
-    val PIXEL_STEP = 50
+  def reprojectExtent(ge: GridExtent, transform: Transform): Extent = {
+    val extent = ge.extent
+    val (cols, rows) = (extent.width / ge.cellwidth, extent.height / ge.cellheight)
+    val PIXEL_STEP = math.min(50.0, math.min(cols, rows)).toInt
 
-    val Extent(xmin, ymin, xmax, ymax) = re.extent
-    val cellwidth = re.cellwidth
-    val cellheight = re.cellheight
+    // Find the threshold to densify the extent at.
+    val xThreshold = (cols / PIXEL_STEP) * ge.cellwidth
+    val yThreshold = (rows / PIXEL_STEP) * ge.cellheight
+    val threshold = math.min(xThreshold, yThreshold)
 
-    val xlen = ((xmax - xmin) / cellwidth).toInt + 1
-    val ylen = ((ymax - ymin) / cellheight).toInt + 1
-
-    var (currentXmin, currentYmin) = transform(xmin, ymin)
-    var currentXmax = currentXmin
-    var currentYmax = currentYmin
-    
-    var currentX = xmin + cellwidth
-    var currentY = ymin + cellheight
-    cfor(1)(_ < math.max(xlen,ylen), _ + 1) { i =>
-      if(i < xlen) {
-        val (x1, y1) = transform(currentX, ymax)
-        val (x2, y2) = transform(currentX, ymin)
-        if(x1 < x2) {
-          if(x1 < currentXmin) 
-            currentXmin = x1
-          if(currentXmax < x2)
-            currentXmax = x2
-        } else {
-          if(x2 < currentXmin) 
-            currentXmin = x2
-          if(currentXmax < x1)
-            currentXmax = x1
-        }
-
-        if(y1 < y2) {
-          if(y1 < currentYmin) 
-            currentYmin = y1
-          if(currentYmax < y2)
-            currentYmax = y2
-        } else {
-          if(y2 < currentYmin) 
-            currentYmin = y2
-          if(currentYmax < y1)
-            currentYmax = y1
-        }
-
-      }
-
-      if(i < ylen) {
-        val (x1, y1) = transform(xmax, currentY)
-        val (x2, y2) = transform(xmin, currentY)
-        if(x1 < x2) {
-          if(x1 < currentXmin) 
-            currentXmin = x1
-          if(currentXmax < x2)
-            currentXmax = x2
-        } else {
-          if(x2 < currentXmin) 
-            currentXmin = x2
-          if(currentXmax < x1)
-            currentXmax = x1
-        }
-
-        if(y1 < y2) {
-          if(y1 < currentYmin) 
-            currentYmin = y1
-          if(currentYmax < y2)
-            currentYmax = y2
-        } else {
-          if(y2 < currentYmin) 
-            currentYmin = y2
-          if(currentYmax < y1)
-            currentYmax = y1
-        }
-      }
-    }
-    
-    Extent(currentXmin, currentYmin, currentXmax, currentYmax)
+    // Densify the extent to get a more accurate reprojection
+    val denseGeom = Polygon(Densifier.densify(extent.toPolygon.jtsGeom, threshold).asInstanceOf[com.vividsolutions.jts.geom.Polygon])
+    denseGeom.reproject(transform).envelope
   }
 
-  /* Aa resolution is computed with the intent that the length of the
+  def apply(ge: GridExtent, transform: Transform, options: Options): GridExtent = {
+    val extent = ge.extent
+    val newExtent = reprojectExtent(ge, transform)
+
+    val (transformedXmin, transformedYmax) = {
+      transform(extent.xmin, extent.ymax)
+    }
+
+    val (transformedXmax, transformedYmin) = {
+      transform(extent.xmax, extent.ymin)
+    }
+
+    options.parentGridExtent match {
+      case Some(parentGridExtent) =>
+        parentGridExtent.createAlignedGridExtent(Extent(transformedXmin, transformedYmin, transformedXmax, transformedYmax))
+      case None =>
+        val (pixelSizeX, pixelSizeY) =
+          options.targetCellSize match {
+            case Some(cellSize) =>
+              (cellSize.width, cellSize.height)
+            case None =>
+              val distance = (transformedXmin, transformedYmax).distance((transformedXmax, transformedYmin))
+              val cols = ge.extent.width / ge.cellwidth
+              val rows = ge.extent.height / ge.cellheight
+              val pixelSize = distance / math.sqrt(cols * cols + rows * rows)
+              (pixelSize, pixelSize)
+          }
+
+        val newColsDouble = newExtent.width / pixelSizeX
+        val newRowsDouble = newExtent.height / pixelSizeY
+
+        val newCols = (newColsDouble + 0.5).toInt//.toLong
+        val newRows = (newRowsDouble + 0.5).toInt//.toLong
+
+        //Adjust the extent to match the pixel size.
+        val adjustedExtent = Extent(newExtent.xmin, newExtent.ymax - (pixelSizeY*newRows), newExtent.xmin + (pixelSizeX*newCols), newExtent.ymax)
+        GridExtent(adjustedExtent, pixelSizeX, pixelSizeY)
+    }
+  }
+
+  def apply(ge: GridExtent, transform: Transform): GridExtent =
+    apply(ge, transform, Options.DEFAULT)
+
+  def apply(ge: GridExtent, src: CRS, dest: CRS, options: Options): GridExtent =
+    if(src == dest) {
+      ge
+    } else {
+      apply(ge, Transform(src, dest), options)
+    }
+
+  def apply(ge: GridExtent, src: CRS, dest: CRS): GridExtent =
+    apply(ge, src, dest, Options.DEFAULT)
+
+  /* A resolution is computed with the intent that the length of the
    * distance from the top left corner of the output imagery to the bottom right
-   * corner would represent the same number of pixels as in the source image. 
+   * corner would represent the same number of pixels as in the source image.
    * Note that if the image is somewhat rotated the diagonal taken isnt of the
    * whole output bounding rectangle, but instead of the locations where the
-   * top/left and bottom/right corners transform.  The output pixel size is 
+   * top/left and bottom/right corners transform.  The output pixel size is
    * always square.  This is intended to approximately preserve the resolution
-   * of the input data in the output file. 
+   * of the input data in the output file.
    */
-  def apply(re: RasterExtent, transform: Transform): RasterExtent = {
-    val extent = re.extent
-    val newExtent = reprojectExtent(re, transform)
+  def apply(re: RasterExtent, transform: Transform, options: Reproject.Options): RasterExtent =
+    apply(re: GridExtent, transform, options).toRasterExtent
 
-    val distance = math.sqrt(newExtent.width*newExtent.width + newExtent.height*newExtent.height)
-    val pixelSize = distance / math.sqrt(re.cols * re.cols + re.rows * re.rows)
+  def apply(re: RasterExtent, transform: Transform): RasterExtent =
+    apply(re, transform, Options.DEFAULT)
 
-    val newCols = ((newExtent.width / pixelSize) + 0.5).toInt
-    val newRows = ((newExtent.height / pixelSize) + 0.5).toInt
+  def apply(re: RasterExtent, src: CRS, dest: CRS, options: Options): RasterExtent =
+    if(src == dest) {
+      re
+    } else {
+      apply(re, Transform(src, dest), options)
+    }
 
-    // Adjust the extent to match the pixel size.
-    val adjustedExtent = Extent(newExtent.xmin, newExtent.ymax - (pixelSize*newRows), newExtent.xmin + (pixelSize*newCols), newExtent.ymax)
+  def apply(re: RasterExtent, src: CRS, dest: CRS): RasterExtent =
+    apply(re, src, dest, Options.DEFAULT)
 
-    RasterExtent(adjustedExtent, newCols, newRows)
-  }
 }

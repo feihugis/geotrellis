@@ -16,14 +16,14 @@
 
 package geotrellis.raster.io.geotiff.tags
 
-import geotrellis.raster.io.geotiff.utils._
+import geotrellis.raster.io.geotiff.util._
 import codes.TagCodes._
 
 import GeoKeys._
 
 import java.nio.ByteBuffer
 
-import monocle.syntax._
+import monocle.syntax.apply._
 import monocle.macros.Lenses
 
 object GeoKeyReader {

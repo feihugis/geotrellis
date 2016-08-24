@@ -37,9 +37,9 @@ import geotrellis.proj4.CSVFileConstants._
 
 import scala.collection.immutable.HashMap
 
-import monocle.syntax._
+import monocle.syntax.apply._
 
-case class GeoTiffGDALParameters(
+case class GeoTiffCSParameters(
   var model: Int = UserDefinedCPV,
   var pcs: Int = UserDefinedCPV,
   var gcs: Int = UserDefinedCPV,
@@ -58,30 +58,31 @@ case class GeoTiffGDALParameters(
   var ctProjection: Int = UserDefinedCPV,
   var mapSystem: Int = UserDefinedCPV,
   var zone: Int = 0,
-  var projectionParameters: Array[(Int, Double)] = Array()
+  var projectionParameters: Array[(Int, Double)] = Array(),
+  var pcsCitation: Option[String] = None
 )
 
 object GeoTiffCSParser {
-
-  def apply(directory: TiffTags) = new GeoTiffCSParser(directory)
-
+  def apply(directory: GeoKeyDirectory) = new GeoTiffCSParser(directory)
 }
 
 /**
   * This class is indirectly ported from the GDAL github repository.
   */
-class GeoTiffCSParser(directory: TiffTags) {
-
-  private val geoKeyDirectory = directory.geoKeyDirectory
+class GeoTiffCSParser(geoKeyDirectory: GeoKeyDirectory) {
 
   private val csvReader = EPSGCSVReader()
 
-  def getProj4String: Option[String] = getProj4String(createGeoTiffGDALParameters)
+  def getProj4String: Option[String] = getProj4String(geoTiffCSParameters)
 
-  lazy val pcs: Int = createGeoTiffGDALParameters.pcs
+  lazy val geoTiffCSParameters = createGeoTiffCSParameters
 
-  private def createGeoTiffGDALParameters: GeoTiffGDALParameters = {
-    val gtgp = GeoTiffGDALParameters()
+  def model: Int = geoTiffCSParameters.model
+  def pcs: Int = geoTiffCSParameters.pcs
+  def gcs: Int = geoTiffCSParameters.gcs
+
+  private def createGeoTiffCSParameters: GeoTiffCSParameters = {
+    val gtgp = GeoTiffCSParameters()
 
     gtgp.model = (geoKeyDirectory &|->
       GeoKeyDirectory._configKeys ^|->
@@ -261,10 +262,15 @@ class GeoTiffCSParser(directory: TiffTags) {
       )
     }
 
+    gtgp.pcsCitation =
+      (geoKeyDirectory &|->
+        GeoKeyDirectory._projectedCSParameterKeys ^|->
+        ProjectedCSParameterKeys._pcsCitation get).map { strings => strings(0) }
+
     gtgp
   }
 
-  private def getPCSData(pcs: Int, gtgp: GeoTiffGDALParameters) {
+  private def getPCSData(pcs: Int, gtgp: GeoTiffCSParameters) {
     val (optDatum, optZone, optMapSystem) = pcsToDatumZoneAndMapSystem(pcs)
 
     val optDatumName = optMapSystem match {
@@ -656,7 +662,7 @@ class GeoTiffCSParser(directory: TiffTags) {
     }
     else angle
 
-  private def setProjectionParameters(gtgp: GeoTiffGDALParameters) {
+  private def setProjectionParameters(gtgp: GeoTiffCSParameters) {
     var originLong, originLat, rectGridAngle = 0.0
     var falseEasting, falseNorthing = 0.0
     var originScale = 1.0
@@ -952,7 +958,7 @@ class GeoTiffCSParser(directory: TiffTags) {
       else Some((MapSys_State_Plane_27, projCode - 10000))
     } else None
 
-  private def getProj4String(gtgp: GeoTiffGDALParameters): Option[String] = {
+  private def getProj4String(gtgp: GeoTiffCSParameters): Option[String] = {
     val proj4SB = new StringBuilder
 
     val units = projectedLinearUnitsMap.get(gtgp.length) match {
@@ -1229,10 +1235,22 @@ class GeoTiffCSParser(directory: TiffTags) {
       proj4SB.append(s" +a=${gtgp.semiMajor} +b=${gtgp.semiMinor}")
     }
 
-    if (proj4SB.length == 0 ||
+    if (
+      proj4SB.length == 0 ||
       gtgp.ctProjection == CT_TransvMercator_SouthOriented ||
-      !proj4SB.toString.contains("+proj")) None
-    else Some(proj4SB.append(units).toString)
+      !proj4SB.toString.contains("+proj")
+    ) {
+      // Account for special cases
+      gtgp.pcsCitation.flatMap { citation =>
+        if(citation.contains("PROJCS[\"WGS_1984_Web_Mercator_Auxiliary_Sphere\"")) {
+          // Handle an ESRI written EPSG:3857
+          Some("+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs")
+        } else {
+          None
+        }
+      }
+    } else {
+      Some(proj4SB.append(units).toString)
+    }
   }
-
 }

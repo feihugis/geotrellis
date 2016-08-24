@@ -5,10 +5,9 @@ import GeomFactory._
 import com.vividsolutions.jts.{geom => jts}
 import scala.collection.mutable
 
-/**
- * Builder for GeometryCollection.
- * This builder can accumulate from both geotrellis geometries and JTS geometries
- */
+/** Builder for GeometryCollection.
+  * @note This builder can accumulate from both geotrellis geometries and JTS geometries
+  */
 class GeometryCollectionBuilder {
   val points = mutable.ListBuffer[Point]()
   val lines = mutable.ListBuffer[Line]()
@@ -24,27 +23,31 @@ class GeometryCollectionBuilder {
     case l: Line => lines += l
     case ml: MultiLine => multiLines += ml
     case p: Polygon => polygons += p
+    case e: Extent => polygons += e.toPolygon
     case mp: MultiPolygon => multiPolygons += mp
     case gc: GeometryCollection => collections += gc
+    case _ => throw new MatchError(s"Unexpected geometry of type ${geom.getClass.getName}: $geom")
   }
   def +=(geom: Geometry) = add(geom)
 
   def addAll(geoms: Traversable[Geometry]) =
     geoms.foreach(g=> add(g))
+
   def ++=(geoms: Traversable[Geometry]) =
     addAll(geoms)
 
-
-  def add(geom: jts.Geometry) = geom match {
-    //implicit conversions are happening here
-    case p: jts.Point => points += p
-    case mp: jts.MultiPoint => multiPoints += mp
-    case l: jts.LineString => lines += l
-    case ml: jts.MultiLineString => multiLines += ml
-    case p: jts.Polygon => polygons += p
-    case mp: jts.MultiPolygon => multiPolygons += mp
-    case gc: jts.GeometryCollection => collections += gc
-  }
+  def add(geom: jts.Geometry) =
+    geom match {
+      //implicit conversions are happening here
+      case p: jts.Point => points += p
+      case mp: jts.MultiPoint => multiPoints += mp
+      case l: jts.LineString => lines += l
+      case ml: jts.MultiLineString => multiLines += ml
+      case p: jts.Polygon => polygons += p
+      case mp: jts.MultiPolygon => multiPolygons += mp
+      case gc: jts.GeometryCollection => collections += gc
+      case _ => throw new MatchError(s"Unexpected geometry of type ${geom.getClass.getName}: $geom")
+    }
   def +=(geom: jts.Geometry) = add(geom)
 
   def addAll(geoms: Traversable[jts.Geometry])(implicit d: DummyImplicit) =

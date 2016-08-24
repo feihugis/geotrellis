@@ -1,12 +1,12 @@
 /*
  * Copyright (c) 2014 Azavea.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,6 +17,7 @@
 package geotrellis.vector
 
 import com.vividsolutions.jts.{geom => jts}
+import com.vividsolutions.jts.algorithm.CGAlgorithms
 import GeomFactory._
 
 object Point {
@@ -28,10 +29,11 @@ object Point {
 
   implicit def jts2Point(jtsGeom: jts.Point): Point = apply(jtsGeom)
 
-  implicit def jtsCoord2Point(coord: jts.Coordinate): Point = 
+  implicit def jtsCoord2Point(coord: jts.Coordinate): Point =
     Point(factory.createPoint(coord))
 }
 
+/** Class representing a point */
 case class Point(jtsGeom: jts.Point) extends Geometry
                                         with Relatable
                                         with ZeroDimensions {
@@ -321,4 +323,16 @@ case class Point(jtsGeom: jts.Point) extends Geometry
    */
   def within(g: Geometry): Boolean =
     jtsGeom.within(g.jtsGeom)
+
+  def isInRing(l: Line): Boolean =
+    CGAlgorithms.isPointInRing(jtsGeom.getCoordinate, l.jtsGeom.getCoordinates)
+
+  def isOnLine(l: Line): Boolean =
+    CGAlgorithms.isOnLine(jtsGeom.getCoordinate, l.jtsGeom.getCoordinates)
+
+  def distanceToSegment(a: Point, b: Point): Double =
+    CGAlgorithms.distancePointLine(jtsGeom.getCoordinate, a.toCoordinate, b.toCoordinate)
+
+  def distanceToInfiniteLine(a: Point, b: Point): Double =
+    CGAlgorithms.distancePointLinePerpendicular(jtsGeom.getCoordinate, a.toCoordinate, b.toCoordinate)
 }
